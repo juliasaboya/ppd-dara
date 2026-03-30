@@ -2,6 +2,9 @@ package dara.model;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
 
 public class Game {
     public static final int INITIAL_RESERVE_PER_PLAYER = 9;
@@ -15,6 +18,7 @@ public class Game {
     private GameState state;
     private Player currentTurn;
     private boolean awaitingRemoval;
+    private final Random random;
 
     public Game(String playerOneName, String playerTwoName) {
         this.board = new Board();
@@ -26,6 +30,7 @@ public class Game {
         this.state = GameState.PLACING;
         this.currentTurn = Player.COLOR_TWO;
         this.awaitingRemoval = false;
+        this.random = new Random();
     }
 
     public Board getBoard() {
@@ -190,10 +195,58 @@ public class Game {
         currentTurn = currentTurn.opponent();
     }
 
+    public void randomizePlacingPhase() {
+        int attempts = 0;
+        while (state != GameState.MOVIMENTATION && attempts < 200) {
+            resetForNewMatchFlow();
+
+            boolean completed = true;
+            while (state == GameState.PLACING) {
+                List<int[]> validMoves = collectValidPlacingMoves(currentTurn);
+                if (validMoves.isEmpty()) {
+                    completed = false;
+                    break;
+                }
+
+                int[] move = validMoves.get(random.nextInt(validMoves.size()));
+                placePiece(currentTurn, move[0], move[1]);
+            }
+
+            if (completed && state == GameState.MOVIMENTATION) {
+                return;
+            }
+
+            attempts++;
+        }
+
+        throw new IllegalStateException("Nao foi possivel gerar um estado aleatorio valido para a fase de movimentacao.");
+    }
+
     private String normalizeName(String value, String fallback) {
         if (value == null || value.isBlank()) {
             return fallback;
         }
         return value.trim();
+    }
+
+    private void resetForNewMatchFlow() {
+        board.clear();
+        playerOneReserve = INITIAL_RESERVE_PER_PLAYER;
+        playerTwoReserve = INITIAL_RESERVE_PER_PLAYER;
+        state = GameState.PLACING;
+        currentTurn = Player.COLOR_TWO;
+        awaitingRemoval = false;
+    }
+
+    private List<int[]> collectValidPlacingMoves(Player player) {
+        List<int[]> validMoves = new ArrayList<>();
+        for (int row = 0; row < Board.ROWS; row++) {
+            for (int column = 0; column < Board.COLUMNS; column++) {
+                if (canPlacePiece(player, row, column)) {
+                    validMoves.add(new int[]{row, column});
+                }
+            }
+        }
+        return validMoves;
     }
 }

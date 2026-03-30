@@ -6,6 +6,7 @@ import dara.network.PlayerSlot;
 import dara.network.Server;
 
 import javax.swing.JFrame;
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
@@ -16,6 +17,7 @@ public class DaraFrame extends JFrame {
     private final LobbyPanel lobbyPanel;
     private Client playerOneClient;
     private Client playerTwoClient;
+    private DaraPanel boardPanel;
     private Timer repaintTimer;
     private Timer countdownTimer;
 
@@ -63,6 +65,8 @@ public class DaraFrame extends JFrame {
                 playerTwoClient = client;
             }
 
+            client.setChatListener((senderSlot, text) -> SwingUtilities.invokeLater(() -> handleChatReceived(senderSlot, text)));
+
             lobbyPanel.markConnected(slot);
 
             if (playerOneClient != null && playerTwoClient != null) {
@@ -95,7 +99,7 @@ public class DaraFrame extends JFrame {
     private void showBoard() {
         System.out.println("Contagem concluida. Abrindo tabuleiro.");
         Game game = new Game(lobbyPanel.getPlayerOneName(), lobbyPanel.getPlayerTwoName());
-        DaraPanel boardPanel = new DaraPanel(game);
+        boardPanel = new DaraPanel(game, this::sendChatMessage);
 
         setContentPane(boardPanel);
         pack();
@@ -104,6 +108,28 @@ public class DaraFrame extends JFrame {
 
         repaintTimer = new Timer(1000, event -> boardPanel.repaint());
         repaintTimer.start();
+    }
+
+    private void sendChatMessage(PlayerSlot slot, String text) {
+        try {
+            if (slot == PlayerSlot.PLAYER_1 && playerOneClient != null) {
+                playerOneClient.sendChat(text);
+            } else if (slot == PlayerSlot.PLAYER_2 && playerTwoClient != null) {
+                playerTwoClient.sendChat(text);
+            }
+        } catch (IOException exception) {
+            if (boardPanel != null) {
+                boardPanel.appendChatMessage("Sistema", "Nao foi possivel enviar a mensagem.");
+            }
+        }
+    }
+
+    private void handleChatReceived(PlayerSlot senderSlot, String text) {
+        if (boardPanel == null || text == null || text.isBlank()) {
+            return;
+        }
+        String senderName = senderSlot == PlayerSlot.PLAYER_1 ? lobbyPanel.getPlayerOneName() : lobbyPanel.getPlayerTwoName();
+        boardPanel.appendChatMessage(senderName, text);
     }
 
     private void shutdownNetwork() {

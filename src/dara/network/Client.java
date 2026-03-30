@@ -1,19 +1,22 @@
 package dara.network;
 
+import dara.application.lobby.LobbyClientSession;
+import dara.transport.socket.SocketMessageChannel;
+
 import java.io.Closeable;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.Socket;
 
 public class Client implements Closeable {
+    public interface ChatListener {
+        void onChatReceived(PlayerSlot senderSlot, String text);
+    }
+
     private final String host;
     private final int port;
     private final PlayerSlot desiredSlot;
 
-    private Socket socket;
-    private DataInputStream input;
-    private DataOutputStream output;
+    private LobbyClientSession session;
     private boolean connected;
 
     public Client(String host, int port, PlayerSlot desiredSlot) {
@@ -28,16 +31,11 @@ public class Client implements Closeable {
         }
 
         System.out.println("Tentando conectar " + desiredSlot.name() + " em " + host + ":" + port);
-        socket = new Socket(host, port);
-        input = new DataInputStream(socket.getInputStream());
-        output = new DataOutputStream(socket.getOutputStream());
-
-        output.writeUTF("JOIN:" + desiredSlot.name());
-        output.flush();
-
-        String response = input.readUTF();
-        System.out.println("Resposta do servidor para " + desiredSlot.name() + ": " + response);
-        if (!response.startsWith("ACCEPT:")) {
+        Socket socket = new Socket(host, port);
+        session = new LobbyClientSession(new SocketMessageChannel(socket), desiredSlot);
+        boolean accepted = session.connect();
+        System.out.println("Resposta do servidor para " + desiredSlot.name() + ": " + accepted);
+        if (!accepted) {
             close();
             return false;
         }
@@ -55,17 +53,23 @@ public class Client implements Closeable {
         return desiredSlot;
     }
 
+    public void setChatListener(ChatListener chatListener) {
+        if (session != null) {
+            session.setChatListener(chatListener::onChatReceived);
+        }
+    }
+
+    public void sendChat(String text) throws IOException {
+        if (session != null) {
+            session.sendChat(text);
+        }
+    }
+
     @Override
     public void close() throws IOException {
         connected = false;
-        if (input != null) {
-            input.close();
-        }
-        if (output != null) {
-            output.close();
-        }
-        if (socket != null && !socket.isClosed()) {
-            socket.close();
+        if (session != null) {
+            session.close();
         }
     }
 

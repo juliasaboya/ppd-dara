@@ -6,8 +6,15 @@ import com.github.weisj.jsvg.view.ViewBox;
 import dara.model.Board;
 import dara.model.Game;
 import dara.model.Player;
+import dara.network.PlayerSlot;
 
+import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import javax.swing.ScrollPaneConstants;
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
@@ -29,6 +36,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class DaraPanel extends JPanel {
+    public interface ChatSender {
+        void send(PlayerSlot slot, String text);
+    }
+
     private static final int PANEL_WIDTH = 1080;
     private static final int PANEL_HEIGHT = 768;
 
@@ -51,24 +62,51 @@ public class DaraPanel extends JPanel {
     private static final int BOARD_HEIGHT = 376;
     private static final int BOARD_MARGIN = 16;
     private static final int BOARD_GAP = 8;
+    private static final int CHAT_X = 246;
+    private static final int CHAT_Y = 567;
+    private static final int CHAT_WIDTH = 589;
+    private static final int CHAT_HEIGHT = 201;
 
     private static final SVGDocument TOP_BANNER_SVG = loadSvg("/dara/ui/images/old_paper_scroll_set.svg");
     private static final SVGDocument CHAT_BOX_SVG = loadSvg("/dara/ui/images/ChatBox.svg");
 
     private final List<ReservePieceHitBox> reserveHitBoxes;
+    private final ChatSender chatSender;
     private final Game game;
+    private final JComboBox<PlayerSlot> chatSenderSelector;
+    private final JButton randomPhaseButton;
+    private final JButton simulateIncomingButton;
+    private final JButton simulatePairButton;
+    private final JTextArea chatTextArea;
+    private final JScrollPane chatScrollPane;
+    private final JTextField chatInputField;
     private String playerMessage;
     private String opponentMessage;
     private Player selectedReservePlayer;
     private BoardCell selectedBoardCell;
 
-    public DaraPanel(Game game) {
+    public DaraPanel(Game game, ChatSender chatSender) {
         this.game = game;
+        this.chatSender = chatSender;
         this.reserveHitBoxes = new ArrayList<>();
         updateStatusMessages();
 
         setPreferredSize(new Dimension(PANEL_WIDTH, PANEL_HEIGHT));
         setBackground(SAND_LIGHT);
+        setLayout(null);
+        chatSenderSelector = createChatSenderSelector();
+        randomPhaseButton = createHelperButton("Auto Fase", CHAT_X + CHAT_WIDTH - 272, CHAT_Y + CHAT_HEIGHT - 52, event -> runRandomPhaseHelper());
+        simulateIncomingButton = createHelperButton("Receber", CHAT_X + CHAT_WIDTH - 178, CHAT_Y + CHAT_HEIGHT - 52, event -> appendTestIncomingMessage());
+        simulatePairButton = createHelperButton("Troca", CHAT_X + CHAT_WIDTH - 90, CHAT_Y + CHAT_HEIGHT - 52, event -> appendTestConversation());
+        chatTextArea = createChatTextArea();
+        chatScrollPane = createChatScrollPane(chatTextArea);
+        chatInputField = createChatInput();
+        add(chatSenderSelector);
+        add(randomPhaseButton);
+        add(simulateIncomingButton);
+        add(simulatePairButton);
+        add(chatScrollPane);
+        add(chatInputField);
         addMouseListener(new BoardMouseHandler());
     }
 
@@ -294,8 +332,8 @@ public class DaraPanel extends JPanel {
 
     private String getDisplayStateText() {
         return switch (game.getState()) {
-            case PLACING -> "Fase de Colocacao";
-            case MOVIMENTATION -> "Fase de Movimentacao";
+            case PLACING -> "Fase de Colocação";
+            case MOVIMENTATION -> "Fase de Movimentação";
             case WAITING -> "Aguardando";
             case FINISHED -> "Partida Finalizada";
         };
@@ -500,6 +538,114 @@ public class DaraPanel extends JPanel {
 
         playerMessage = game.getCurrentTurnName() + ": selecione uma peca para mover.";
         opponentMessage = game.getWaitingPlayerName() + ": aguardando jogada do oponente.";
+    }
+
+    public void appendChatMessage(String senderName, String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        if (!chatTextArea.getText().isBlank()) {
+            chatTextArea.append(System.lineSeparator());
+        }
+        chatTextArea.append(senderName + ": " + text);
+        chatTextArea.setCaretPosition(chatTextArea.getDocument().getLength());
+        repaint();
+    }
+
+    public void appendTestConversation() {
+        appendChatMessage(game.getPlayerOneName(), "Teste local: mensagem enviada.");
+        appendChatMessage(game.getPlayerTwoName(), "Teste remoto: mensagem recebida.");
+    }
+
+    public void appendTestIncomingMessage() {
+        appendChatMessage(game.getPlayerTwoName(), "Mensagem simulada do adversario.");
+    }
+
+    public void appendTestOutgoingMessage() {
+        appendChatMessage(game.getPlayerOneName(), "Mensagem simulada do jogador local.");
+    }
+
+    private JTextArea createChatTextArea() {
+        JTextArea area = new JTextArea();
+        area.setEditable(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setFont(new Font("Serif", Font.BOLD, 16));
+        area.setForeground(INK);
+        area.setOpaque(false);
+        area.setFocusable(false);
+        return area;
+    }
+
+    private JScrollPane createChatScrollPane(JTextArea area) {
+        JScrollPane scrollPane = new JScrollPane(area);
+        scrollPane.setBounds(CHAT_X + 96, CHAT_Y + 54, CHAT_WIDTH - 192, 96);
+        scrollPane.setOpaque(false);
+        scrollPane.getViewport().setOpaque(false);
+        scrollPane.setBorder(null);
+        scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+        return scrollPane;
+    }
+
+    private JComboBox<PlayerSlot> createChatSenderSelector() {
+        JComboBox<PlayerSlot> selector = new JComboBox<>(new PlayerSlot[]{PlayerSlot.PLAYER_1, PlayerSlot.PLAYER_2});
+        selector.setBounds(CHAT_X + 95, CHAT_Y + CHAT_HEIGHT - 52, 92, 34);
+        selector.setFont(new Font("Serif", Font.BOLD, 14));
+        selector.setForeground(INK);
+        selector.setBackground(new Color(245, 220, 180, 230));
+        selector.setSelectedItem(PlayerSlot.PLAYER_1);
+        return selector;
+    }
+
+    private JTextField createChatInput() {
+        JTextField field = new JTextField();
+        field.setBounds(CHAT_X + 194, CHAT_Y + CHAT_HEIGHT - 52, CHAT_WIDTH - 378, 34);
+        field.setFont(new Font("Serif", Font.BOLD, 16));
+        field.setForeground(INK);
+        field.setBackground(new Color(245, 220, 180, 230));
+        field.setCaretColor(INK);
+        field.setBorder(javax.swing.BorderFactory.createCompoundBorder(
+                javax.swing.BorderFactory.createLineBorder(new Color(138, 92, 52), 2, true),
+                javax.swing.BorderFactory.createEmptyBorder(4, 10, 4, 10)
+        ));
+        field.addActionListener(event -> submitChatMessage());
+        return field;
+    }
+
+    private JButton createHelperButton(String text, int x, int y, java.awt.event.ActionListener listener) {
+        JButton button = new JButton(text);
+        button.setBounds(x, y, 78, 34);
+        button.setFont(new Font("Serif", Font.BOLD, 13));
+        button.setFocusPainted(false);
+        button.setForeground(INK);
+        button.setBackground(new Color(232, 191, 140));
+        button.addActionListener(listener);
+        return button;
+    }
+
+    private void submitChatMessage() {
+        String text = chatInputField.getText();
+        if (text == null || text.isBlank()) {
+            return;
+        }
+
+        PlayerSlot senderSlot = (PlayerSlot) chatSenderSelector.getSelectedItem();
+        chatSender.send(senderSlot, text.trim());
+        chatInputField.setText("");
+    }
+
+    private void runRandomPhaseHelper() {
+        try {
+            game.randomizePlacingPhase();
+            selectedReservePlayer = null;
+            selectedBoardCell = null;
+            updateStatusMessages();
+            appendChatMessage("Sistema", "Helper: fase de colocacao preenchida aleatoriamente.");
+            repaint();
+        } catch (IllegalStateException exception) {
+            appendChatMessage("Sistema", "Helper: nao foi possivel gerar a fase aleatoria.");
+        }
     }
 
     private static final class BoardCell {
