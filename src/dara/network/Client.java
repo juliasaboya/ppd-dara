@@ -8,6 +8,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.util.Scanner;
 
 public class Client implements Closeable {
     public interface ChatListener {
@@ -152,18 +153,44 @@ public class Client implements Closeable {
             if (!connected) {
                 return false;
             }
-            System.out.println("Pressione Ctrl+C para encerrar.");
-            Thread.sleep(Long.MAX_VALUE);
+            client.setChatListener((senderSlot, text) -> System.out.println(senderSlot.getLabel() + ": " + text));
+            runTerminalChat(client);
             return true;
         } catch (UnknownHostException exception) {
             System.err.println("Host nao encontrado: " + host);
         } catch (IOException exception) {
             System.err.println("Falha de conexao com " + host + ":" + port + ": " + exception.getMessage());
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            System.err.println("Cliente encerrado.");
         }
         return false;
+    }
+
+    private static void runTerminalChat(Client client) throws IOException {
+        System.out.println("Digite mensagens para enviar ao outro jogador.");
+        System.out.println("Use /sair para encerrar o cliente.");
+
+        Scanner scanner = new Scanner(System.in);
+        while (client.isConnected()) {
+            if (!scanner.hasNextLine()) {
+                break;
+            }
+
+            String line = scanner.nextLine();
+            if (line == null) {
+                break;
+            }
+
+            String text = line.trim();
+            if (text.isEmpty()) {
+                continue;
+            }
+
+            if ("/sair".equalsIgnoreCase(text)) {
+                System.out.println("Cliente encerrado pelo usuario.");
+                break;
+            }
+
+            client.sendChat(text);
+        }
     }
 
     private static void printUsage() {
