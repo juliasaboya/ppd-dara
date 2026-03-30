@@ -8,8 +8,9 @@ import dara.model.Game;
 import dara.model.Player;
 import dara.network.PlayerSlot;
 
+import javax.imageio.ImageIO;
 import javax.swing.JButton;
-import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
@@ -23,6 +24,7 @@ import java.awt.Font;
 import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Image;
 import java.awt.Paint;
 import java.awt.Polygon;
 import java.awt.Rectangle;
@@ -31,6 +33,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.GeneralPath;
+import java.io.IOException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,8 +59,9 @@ public class DaraPanel extends JPanel {
     private static final Color INK = new Color(33, 22, 12);
     private static final int TOP_BANNER_MARGIN = 10;
     private static final double SVG_SCALE = 0.75;
+    private static final int TOP_BANNER_X = 280;
     private static final int BOARD_X = 301;
-    private static final int BOARD_Y = 166;
+    private static final int BOARD_Y = 192;
     private static final int BOARD_WIDTH = 477;
     private static final int BOARD_HEIGHT = 376;
     private static final int BOARD_MARGIN = 16;
@@ -66,20 +70,25 @@ public class DaraPanel extends JPanel {
     private static final int CHAT_Y = 567;
     private static final int CHAT_WIDTH = 589;
     private static final int CHAT_HEIGHT = 201;
+    private static final int SIDE_CHAT_WIDTH = 180;
+    private static final int LEFT_CHAT_X = 18;
+    private static final int LEFT_CHAT_Y = 92;
+    private static final int RIGHT_CHAT_Y = 448;
 
     private static final SVGDocument TOP_BANNER_SVG = loadSvg("/dara/ui/images/old_paper_scroll_set.svg");
     private static final SVGDocument CHAT_BOX_SVG = loadSvg("/dara/ui/images/ChatBox.svg");
+    private static final Image BACKGROUND_IMAGE = loadImage("/dara/ui/images/fundo_areia.png");
 
     private final List<ReservePieceHitBox> reserveHitBoxes;
     private final ChatSender chatSender;
     private final Game game;
-    private final JComboBox<PlayerSlot> chatSenderSelector;
     private final JButton randomPhaseButton;
-    private final JButton simulateIncomingButton;
-    private final JButton simulatePairButton;
+    private final JTextField playerOneChatField;
+    private final JTextField playerTwoChatField;
+    private final JComponent playerOneChatIcon;
+    private final JComponent playerTwoChatIcon;
     private final JTextArea chatTextArea;
     private final JScrollPane chatScrollPane;
-    private final JTextField chatInputField;
     private String playerMessage;
     private String opponentMessage;
     private Player selectedReservePlayer;
@@ -94,19 +103,19 @@ public class DaraPanel extends JPanel {
         setPreferredSize(new Dimension(PANEL_WIDTH, PANEL_HEIGHT));
         setBackground(SAND_LIGHT);
         setLayout(null);
-        chatSenderSelector = createChatSenderSelector();
-        randomPhaseButton = createHelperButton("Auto Fase", CHAT_X + CHAT_WIDTH - 272, CHAT_Y + CHAT_HEIGHT - 52, event -> runRandomPhaseHelper());
-        simulateIncomingButton = createHelperButton("Receber", CHAT_X + CHAT_WIDTH - 178, CHAT_Y + CHAT_HEIGHT - 52, event -> appendTestIncomingMessage());
-        simulatePairButton = createHelperButton("Troca", CHAT_X + CHAT_WIDTH - 90, CHAT_Y + CHAT_HEIGHT - 52, event -> appendTestConversation());
+        randomPhaseButton = createHelperButton("Auto Fase", TOP_BANNER_X + 382, TOP_BANNER_MARGIN + 30, event -> runRandomPhaseHelper());
+        playerTwoChatIcon = createMessageIcon(LEFT_CHAT_X, LEFT_CHAT_Y);
+        playerTwoChatField = createSideChatField(LEFT_CHAT_X + 30, LEFT_CHAT_Y, PlayerSlot.PLAYER_2);
+        playerOneChatIcon = createMessageIcon(864, RIGHT_CHAT_Y);
+        playerOneChatField = createSideChatField(894, RIGHT_CHAT_Y, PlayerSlot.PLAYER_1);
         chatTextArea = createChatTextArea();
         chatScrollPane = createChatScrollPane(chatTextArea);
-        chatInputField = createChatInput();
-        add(chatSenderSelector);
         add(randomPhaseButton);
-        add(simulateIncomingButton);
-        add(simulatePairButton);
+        add(playerTwoChatIcon);
+        add(playerTwoChatField);
+        add(playerOneChatIcon);
+        add(playerOneChatField);
         add(chatScrollPane);
-        add(chatInputField);
         addMouseListener(new BoardMouseHandler());
     }
 
@@ -130,17 +139,14 @@ public class DaraPanel extends JPanel {
     }
 
     private void drawBackground(Graphics2D g2) {
+        if (BACKGROUND_IMAGE != null) {
+            g2.drawImage(BACKGROUND_IMAGE, 0, 0, getWidth(), getHeight(), this);
+            return;
+        }
+
         Paint oldPaint = g2.getPaint();
         g2.setPaint(new GradientPaint(0, 0, SAND_LIGHT, 0, getHeight(), SAND_MID));
         g2.fillRect(0, 0, getWidth(), getHeight());
-
-        g2.setColor(new Color(184, 141, 87, 38));
-        g2.setStroke(new BasicStroke(46f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g2.drawArc(-120, 10, 480, 220, 10, 160);
-        g2.drawArc(250, -40, 520, 250, 5, 170);
-        g2.drawArc(640, 0, 500, 240, 0, 165);
-        g2.drawArc(-60, 500, 540, 220, 200, 165);
-        g2.drawArc(520, 470, 620, 260, 185, 160);
         g2.setPaint(oldPaint);
     }
 
@@ -326,8 +332,8 @@ public class DaraPanel extends JPanel {
     private void drawStatusLines(Graphics2D g2) {
         g2.setColor(new Color(74, 48, 24));
         g2.setFont(new Font("Serif", Font.BOLD, 18));
-        drawCenteredText(g2, playerMessage, new Rectangle(BOARD_X - 80, 122, BOARD_WIDTH + 160, 22));
-        drawCenteredText(g2, opponentMessage, new Rectangle(BOARD_X - 80, 144, BOARD_WIDTH + 160, 22));
+        drawCenteredText(g2, playerMessage, new Rectangle(BOARD_X - 80, 146, BOARD_WIDTH + 160, 22));
+        drawCenteredText(g2, opponentMessage, new Rectangle(BOARD_X - 80, 168, BOARD_WIDTH + 160, 22));
     }
 
     private String getDisplayStateText() {
@@ -374,6 +380,18 @@ public class DaraPanel extends JPanel {
             throw new IllegalStateException("Falha ao renderizar o SVG: " + resourcePath);
         }
         return document;
+    }
+
+    private static Image loadImage(String resourcePath) {
+        URL resource = DaraPanel.class.getResource(resourcePath);
+        if (resource == null) {
+            return null;
+        }
+        try {
+            return ImageIO.read(resource);
+        } catch (IOException exception) {
+            return null;
+        }
     }
 
     private Rectangle getBoardBounds() {
@@ -552,15 +570,6 @@ public class DaraPanel extends JPanel {
         repaint();
     }
 
-    public void appendTestConversation() {
-        appendChatMessage(game.getPlayerOneName(), "Teste local: mensagem enviada.");
-        appendChatMessage(game.getPlayerTwoName(), "Teste remoto: mensagem recebida.");
-    }
-
-    public void appendTestIncomingMessage() {
-        appendChatMessage(game.getPlayerTwoName(), "Mensagem simulada do adversario.");
-    }
-
     public void appendTestOutgoingMessage() {
         appendChatMessage(game.getPlayerOneName(), "Mensagem simulada do jogador local.");
     }
@@ -579,7 +588,7 @@ public class DaraPanel extends JPanel {
 
     private JScrollPane createChatScrollPane(JTextArea area) {
         JScrollPane scrollPane = new JScrollPane(area);
-        scrollPane.setBounds(CHAT_X + 96, CHAT_Y + 54, CHAT_WIDTH - 192, 96);
+        scrollPane.setBounds(CHAT_X + 96, CHAT_Y + 52, CHAT_WIDTH - 192, 122);
         scrollPane.setOpaque(false);
         scrollPane.getViewport().setOpaque(false);
         scrollPane.setBorder(null);
@@ -588,20 +597,10 @@ public class DaraPanel extends JPanel {
         return scrollPane;
     }
 
-    private JComboBox<PlayerSlot> createChatSenderSelector() {
-        JComboBox<PlayerSlot> selector = new JComboBox<>(new PlayerSlot[]{PlayerSlot.PLAYER_1, PlayerSlot.PLAYER_2});
-        selector.setBounds(CHAT_X + 95, CHAT_Y + CHAT_HEIGHT - 52, 92, 34);
-        selector.setFont(new Font("Serif", Font.BOLD, 14));
-        selector.setForeground(INK);
-        selector.setBackground(new Color(245, 220, 180, 230));
-        selector.setSelectedItem(PlayerSlot.PLAYER_1);
-        return selector;
-    }
-
-    private JTextField createChatInput() {
+    private JTextField createSideChatField(int x, int y, PlayerSlot slot) {
         JTextField field = new JTextField();
-        field.setBounds(CHAT_X + 194, CHAT_Y + CHAT_HEIGHT - 52, CHAT_WIDTH - 378, 34);
-        field.setFont(new Font("Serif", Font.BOLD, 16));
+        field.setBounds(x, y, SIDE_CHAT_WIDTH, 34);
+        field.setFont(new Font("Serif", Font.BOLD, 14));
         field.setForeground(INK);
         field.setBackground(new Color(245, 220, 180, 230));
         field.setCaretColor(INK);
@@ -609,13 +608,37 @@ public class DaraPanel extends JPanel {
                 javax.swing.BorderFactory.createLineBorder(new Color(138, 92, 52), 2, true),
                 javax.swing.BorderFactory.createEmptyBorder(4, 10, 4, 10)
         ));
-        field.addActionListener(event -> submitChatMessage());
+        field.addActionListener(event -> submitChatMessage(slot, field));
         return field;
+    }
+
+    private JComponent createMessageIcon(int x, int y) {
+        JComponent icon = new JComponent() {
+            @Override
+            protected void paintComponent(Graphics graphics) {
+                Graphics2D g2 = (Graphics2D) graphics.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(new Color(114, 77, 42));
+                g2.fillRoundRect(2, 2, 22, 18, 8, 8);
+                Polygon tail = new Polygon();
+                tail.addPoint(9, 19);
+                tail.addPoint(12, 26);
+                tail.addPoint(16, 19);
+                g2.fillPolygon(tail);
+                g2.setColor(new Color(245, 220, 180));
+                g2.fillOval(7, 8, 3, 3);
+                g2.fillOval(12, 8, 3, 3);
+                g2.fillOval(17, 8, 3, 3);
+                g2.dispose();
+            }
+        };
+        icon.setBounds(x, y + 4, 28, 28);
+        return icon;
     }
 
     private JButton createHelperButton(String text, int x, int y, java.awt.event.ActionListener listener) {
         JButton button = new JButton(text);
-        button.setBounds(x, y, 78, 34);
+        button.setBounds(x, y, "Auto Fase".equals(text) ? 96 : 78, 34);
         button.setFont(new Font("Serif", Font.BOLD, 13));
         button.setFocusPainted(false);
         button.setForeground(INK);
@@ -624,15 +647,14 @@ public class DaraPanel extends JPanel {
         return button;
     }
 
-    private void submitChatMessage() {
-        String text = chatInputField.getText();
+    private void submitChatMessage(PlayerSlot slot, JTextField field) {
+        String text = field.getText();
         if (text == null || text.isBlank()) {
             return;
         }
 
-        PlayerSlot senderSlot = (PlayerSlot) chatSenderSelector.getSelectedItem();
-        chatSender.send(senderSlot, text.trim());
-        chatInputField.setText("");
+        chatSender.send(slot, text.trim());
+        field.setText("");
     }
 
     private void runRandomPhaseHelper() {
