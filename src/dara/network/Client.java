@@ -1,6 +1,7 @@
 package dara.network;
 
 import dara.application.lobby.LobbyClientSession;
+import dara.protocol.GameAction;
 import dara.transport.socket.SocketMessageChannel;
 
 import java.io.Closeable;
@@ -10,6 +11,10 @@ import java.net.Socket;
 public class Client implements Closeable {
     public interface ChatListener {
         void onChatReceived(PlayerSlot senderSlot, String text);
+    }
+
+    public interface GameActionListener {
+        void onGameActionReceived(GameAction action);
     }
 
     private final String host;
@@ -59,9 +64,21 @@ public class Client implements Closeable {
         }
     }
 
+    public void setGameActionListener(GameActionListener gameActionListener) {
+        if (session != null) {
+            session.setGameActionListener(gameActionListener::onGameActionReceived);
+        }
+    }
+
     public void sendChat(String text) throws IOException {
         if (session != null) {
             session.sendChat(text);
+        }
+    }
+
+    public void sendGameAction(GameAction action) throws IOException {
+        if (session != null) {
+            session.sendGameAction(action);
         }
     }
 

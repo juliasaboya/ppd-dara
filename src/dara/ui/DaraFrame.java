@@ -1,9 +1,12 @@
 package dara.ui;
 
 import dara.model.Game;
+import dara.model.Player;
 import dara.network.Client;
 import dara.network.PlayerSlot;
 import dara.network.Server;
+import dara.protocol.GameAction;
+import dara.protocol.GameActionType;
 
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
@@ -13,8 +16,8 @@ import java.awt.event.WindowEvent;
 import java.io.IOException;
 
 public class DaraFrame extends JFrame {
-    private final Server server;
-    private final LobbyPanel lobbyPanel;
+    private Server server;
+    private LobbyPanel lobbyPanel;
     private Client playerOneClient;
     private Client playerTwoClient;
     private DaraPanel boardPanel;
@@ -23,24 +26,9 @@ public class DaraFrame extends JFrame {
 
     public DaraFrame() {
         super("Dara");
-        this.server = new Server();
-        this.lobbyPanel = new LobbyPanel(
-                () -> connectPlayer(PlayerSlot.PLAYER_1),
-                () -> connectPlayer(PlayerSlot.PLAYER_2)
-        );
-
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setResizable(false);
-        setContentPane(lobbyPanel);
-        pack();
-        setLocationRelativeTo(null);
-
-        try {
-            server.start();
-            System.out.println("Lobby iniciado. Servidor local ativo.");
-        } catch (IOException exception) {
-            lobbyPanel.showConnectionError("NAO FOI POSSIVEL INICIAR O SERVIDOR");
-        }
+        startFreshLobby();
 
         addWindowListener(new WindowAdapter() {
             @Override
@@ -66,6 +54,7 @@ public class DaraFrame extends JFrame {
             }
 
             client.setChatListener((senderSlot, text) -> SwingUtilities.invokeLater(() -> handleChatReceived(senderSlot, text)));
+            client.setGameActionListener(action -> SwingUtilities.invokeLater(() -> handleRemoteGameAction(action)));
 
             lobbyPanel.markConnected(slot);
 
@@ -99,7 +88,7 @@ public class DaraFrame extends JFrame {
     private void showBoard() {
         System.out.println("Contagem concluida. Abrindo tabuleiro.");
         Game game = new Game(lobbyPanel.getPlayerOneName(), lobbyPanel.getPlayerTwoName());
-        boardPanel = new DaraPanel(game, this::sendChatMessage);
+        boardPanel = new DaraPanel(game, this::sendChatMessage, this::sendGameAction, this::restartToFreshLobby);
 
         setContentPane(boardPanel);
         pack();
@@ -132,15 +121,93 @@ public class DaraFrame extends JFrame {
         boardPanel.appendChatMessage(senderName, text);
     }
 
+    private void sendGameAction(GameAction action) {
+        try {
+            if (action.slot() == PlayerSlot.PLAYER_1 && playerOneClient != null) {
+                playerOneClient.sendGameAction(action);
+            } else if (action.slot() == PlayerSlot.PLAYER_2 && playerTwoClient != null) {
+                playerTwoClient.sendGameAction(action);
+            }
+        } catch (IOException exception) {
+            if (boardPanel != null) {
+                boardPanel.appendChatMessage("Sistema", "Nao foi possivel sincronizar a jogada.");
+            }
+        }
+    }
+
+    private void handleRemoteGameAction(GameAction action) {
+        if (boardPanel == null || action == null) {
+            return;
+        }
+
+        // Na UI atual de janela unica existem dois clientes locais. Reaplicar aqui duplicaria a jogada.
+        if (playerOneClient != null && playerTwoClient != null) {
+            return;
+        }
+
+        Game game = boardPanel.getGame();
+        Player player = action.slot() == PlayerSlot.PLAYER_1 ? Player.COLOR_TWO : Player.COLOR_ONE;
+
+        if (action.type() == GameActionType.PLACE) {
+            game.applyRemotePlace(player, action.row(), action.column());
+        } else if (action.type() == GameActionType.MOVE) {
+            game.applyRemoteMove(player, action.fromRow(), action.fromColumn(), action.toRow(), action.toColumn());
+        } else if (action.type() == GameActionType.REMOVE) {
+            game.applyRemoteRemove(player, action.row(), action.column());
+        } else if (action.type() == GameActionType.SURRENDER) {
+            game.applyRemoteSurrender(player);
+        }
+
+        boardPanel.refreshStatus();
+        boardPanel.repaint();
+    }
+
+    private void restartToFreshLobby() {
+        shutdownNetwork();
+        playerOneClient = null;
+        playerTwoClient = null;
+        boardPanel = null;
+        startFreshLobby();
+    }
+
+    private void startFreshLobby() {
+        server = new Server();
+        lobbyPanel = new LobbyPanel(
+                () -> connectPlayer(PlayerSlot.PLAYER_1),
+                () -> connectPlayer(PlayerSlot.PLAYER_2)
+        );
+
+        setContentPane(lobbyPanel);
+        pack();
+        setLocationRelativeTo(null);
+        revalidate();
+        repaint();
+
+        try {
+            server.start();
+            System.out.println("Lobby iniciado. Servidor local ativo.");
+        } catch (IOException exception) {
+            lobbyPanel.showConnectionError("NAO FOI POSSIVEL INICIAR O SERVIDOR");
+        }
+    }
+
     private void shutdownNetwork() {
         try {
+            if (countdownTimer != null) {
+                countdownTimer.stop();
+            }
+            if (repaintTimer != null) {
+                repaintTimer.stop();
+            }
             if (playerOneClient != null) {
                 playerOneClient.close();
             }
             if (playerTwoClient != null) {
                 playerTwoClient.close();
             }
-            server.close();
+            if (server != null) {
+                server.close();
+            }
         } catch (IOException ignored) {
         }
     }

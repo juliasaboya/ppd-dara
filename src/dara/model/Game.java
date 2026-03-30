@@ -195,6 +195,50 @@ public class Game {
         currentTurn = currentTurn.opponent();
     }
 
+    public void applyRemotePlace(Player player, int row, int column) {
+        board.placePiece(row, column, player);
+        if (player == Player.COLOR_ONE) {
+            playerOneReserve--;
+        } else {
+            playerTwoReserve--;
+        }
+
+        if (playerOneReserve == 0 && playerTwoReserve == 0) {
+            state = GameState.MOVIMENTATION;
+            currentTurn = player.opponent();
+            return;
+        }
+
+        currentTurn = player.opponent();
+    }
+
+    public void applyRemoteMove(Player player, int fromRow, int fromColumn, int toRow, int toColumn) {
+        board.movePiece(fromRow, fromColumn, toRow, toColumn);
+        if (board.createsLine(toRow, toColumn)) {
+            awaitingRemoval = true;
+            currentTurn = player;
+            return;
+        }
+        currentTurn = player.opponent();
+    }
+
+    public void applyRemoteRemove(Player player, int row, int column) {
+        board.removePiece(row, column);
+        awaitingRemoval = false;
+        if (board.countPieces(player.opponent()) <= 2) {
+            state = GameState.FINISHED;
+            currentTurn = player;
+            return;
+        }
+        currentTurn = player.opponent();
+    }
+
+    public void applyRemoteSurrender(Player player) {
+        state = GameState.FINISHED;
+        currentTurn = player.opponent();
+        awaitingRemoval = false;
+    }
+
     public void randomizePlacingPhase() {
         int attempts = 0;
         while (state != GameState.MOVIMENTATION && attempts < 200) {

@@ -7,8 +7,11 @@ import dara.model.Board;
 import dara.model.Game;
 import dara.model.Player;
 import dara.network.PlayerSlot;
+import dara.protocol.GameAction;
+import dara.protocol.GameActionType;
 
 import javax.imageio.ImageIO;
+import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
@@ -16,6 +19,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ScrollPaneConstants;
+import javax.swing.Timer;
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
@@ -29,6 +33,7 @@ import java.awt.Paint;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
@@ -43,12 +48,15 @@ public class DaraPanel extends JPanel {
         void send(PlayerSlot slot, String text);
     }
 
+    public interface GameActionSender {
+        void send(GameAction action);
+    }
+
     private static final int PANEL_WIDTH = 1080;
     private static final int PANEL_HEIGHT = 768;
 
     private static final Color SAND_LIGHT = new Color(240, 197, 142);
     private static final Color SAND_MID = new Color(220, 170, 112);
-    private static final Color SAND_DARK = new Color(180, 128, 76);
     private static final Color BOARD_FRAME = new Color(145, 118, 79);
     private static final Color CELL_LIGHT = new Color(248, 229, 188);
     private static final Color CELL_DARK = new Color(228, 184, 124);
@@ -57,9 +65,10 @@ public class DaraPanel extends JPanel {
     private static final Color PLAYER_TWO = new Color(178, 92, 28);
     private static final Color PLAYER_TWO_SHADOW = new Color(122, 54, 17);
     private static final Color INK = new Color(33, 22, 12);
+
     private static final int TOP_BANNER_MARGIN = 10;
-    private static final double SVG_SCALE = 0.75;
     private static final int TOP_BANNER_X = 280;
+    private static final double SVG_SCALE = 0.75;
     private static final int BOARD_X = 301;
     private static final int BOARD_Y = 192;
     private static final int BOARD_WIDTH = 477;
@@ -81,8 +90,12 @@ public class DaraPanel extends JPanel {
 
     private final List<ReservePieceHitBox> reserveHitBoxes;
     private final ChatSender chatSender;
+    private final GameActionSender gameActionSender;
+    private final Runnable restartToLobbyAction;
     private final Game game;
     private final JButton randomPhaseButton;
+    private final JButton surrenderButton;
+    private final JButton restartButton;
     private final JTextField playerOneChatField;
     private final JTextField playerTwoChatField;
     private final JComponent playerOneChatIcon;
@@ -93,30 +106,45 @@ public class DaraPanel extends JPanel {
     private String opponentMessage;
     private Player selectedReservePlayer;
     private BoardCell selectedBoardCell;
+    private boolean randomPhaseUsed;
+    private PieceAnimation activeAnimation;
+    private Timer animationTimer;
 
-    public DaraPanel(Game game, ChatSender chatSender) {
+    public DaraPanel(Game game, ChatSender chatSender, GameActionSender gameActionSender, Runnable restartToLobbyAction) {
         this.game = game;
         this.chatSender = chatSender;
+        this.gameActionSender = gameActionSender;
+        this.restartToLobbyAction = restartToLobbyAction;
         this.reserveHitBoxes = new ArrayList<>();
-        updateStatusMessages();
 
         setPreferredSize(new Dimension(PANEL_WIDTH, PANEL_HEIGHT));
         setBackground(SAND_LIGHT);
         setLayout(null);
-        randomPhaseButton = createHelperButton("Auto Fase", TOP_BANNER_X + 382, TOP_BANNER_MARGIN + 30, event -> runRandomPhaseHelper());
+
+        randomPhaseButton = createHelperButton("Auto Fase", TOP_BANNER_X + 384, TOP_BANNER_MARGIN + 24, 96, event -> runRandomPhaseHelper());
+        surrenderButton = createHelperButton("Desistir", TOP_BANNER_X + 384, TOP_BANNER_MARGIN + 64, 96, event -> surrenderMatch());
+        restartButton = createHelperButton("Novo Jogo", BOARD_X + 168, BOARD_Y + 214, 140, event -> restartToLobbyAction.run());
+        restartButton.setVisible(false);
+
         playerTwoChatIcon = createMessageIcon(LEFT_CHAT_X, LEFT_CHAT_Y);
         playerTwoChatField = createSideChatField(LEFT_CHAT_X + 30, LEFT_CHAT_Y, PlayerSlot.PLAYER_2);
         playerOneChatIcon = createMessageIcon(864, RIGHT_CHAT_Y);
         playerOneChatField = createSideChatField(894, RIGHT_CHAT_Y, PlayerSlot.PLAYER_1);
+
         chatTextArea = createChatTextArea();
         chatScrollPane = createChatScrollPane(chatTextArea);
+
         add(randomPhaseButton);
+        add(surrenderButton);
+        add(restartButton);
         add(playerTwoChatIcon);
         add(playerTwoChatField);
         add(playerOneChatIcon);
         add(playerOneChatField);
         add(chatScrollPane);
         addMouseListener(new BoardMouseHandler());
+
+        updateStatusMessages();
     }
 
     @Override
@@ -129,11 +157,16 @@ public class DaraPanel extends JPanel {
 
         drawBackground(g2);
         drawTopBanner(g2);
-        drawStatusLines(g2);
         drawBoard(g2);
         drawLeftReserve(g2);
         drawRightReserve(g2);
         drawChatBox(g2);
+        if (game.getState() == dara.model.GameState.FINISHED) {
+            drawFinishedOverlay(g2);
+        } else {
+            drawStatusLines(g2);
+        }
+        drawActiveAnimation(g2);
 
         g2.dispose();
     }
@@ -163,30 +196,24 @@ public class DaraPanel extends JPanel {
 
     private void drawBoard(Graphics2D g2) {
         reserveHitBoxes.clear();
-        int boardX = BOARD_X;
-        int boardY = BOARD_Y;
-        int boardWidth = BOARD_WIDTH;
-        int boardHeight = BOARD_HEIGHT;
 
-        g2.setPaint(new GradientPaint(boardX, boardY, new Color(253, 240, 213), boardX, boardY + boardHeight, new Color(235, 205, 159)));
-        g2.fillRoundRect(boardX, boardY, boardWidth, boardHeight, 8, 8);
+        g2.setPaint(new GradientPaint(BOARD_X, BOARD_Y, new Color(253, 240, 213), BOARD_X, BOARD_Y + BOARD_HEIGHT, new Color(235, 205, 159)));
+        g2.fillRoundRect(BOARD_X, BOARD_Y, BOARD_WIDTH, BOARD_HEIGHT, 8, 8);
         g2.setColor(BOARD_FRAME);
         g2.setStroke(new BasicStroke(3f));
-        g2.drawRoundRect(boardX, boardY, boardWidth, boardHeight, 8, 8);
+        g2.drawRoundRect(BOARD_X, BOARD_Y, BOARD_WIDTH, BOARD_HEIGHT, 8, 8);
 
-        int margin = BOARD_MARGIN;
-        int gap = BOARD_GAP;
-        int cellWidth = (boardWidth - margin * 2 - gap * (Board.COLUMNS - 1)) / Board.COLUMNS;
-        int cellHeight = (boardHeight - margin * 2 - gap * (Board.ROWS - 1)) / Board.ROWS;
+        int cellWidth = (BOARD_WIDTH - BOARD_MARGIN * 2 - BOARD_GAP * (Board.COLUMNS - 1)) / Board.COLUMNS;
+        int cellHeight = (BOARD_HEIGHT - BOARD_MARGIN * 2 - BOARD_GAP * (Board.ROWS - 1)) / Board.ROWS;
 
         for (int row = 0; row < Board.ROWS; row++) {
             for (int column = 0; column < Board.COLUMNS; column++) {
-                int x = boardX + margin + column * (cellWidth + gap);
-                int y = boardY + margin + row * (cellHeight + gap);
+                int x = BOARD_X + BOARD_MARGIN + column * (cellWidth + BOARD_GAP);
+                int y = BOARD_Y + BOARD_MARGIN + row * (cellHeight + BOARD_GAP);
                 drawCell(g2, x, y, cellWidth, cellHeight, row, column);
 
                 Player piece = game.getBoard().getPiece(row, column);
-                if (piece != null) {
+                if (piece != null && !isAnimatedDestination(row, column)) {
                     int pieceSize = Math.min(cellWidth, cellHeight) - 28;
                     drawPiece(g2, x + cellWidth / 2, y + cellHeight / 2, pieceSize / 2, piece);
                 }
@@ -248,7 +275,6 @@ public class DaraPanel extends JPanel {
         g2.setColor(INK);
         g2.setFont(new Font("Serif", Font.BOLD, 30));
         g2.drawString(game.getPlayerTwoName(), 48, 170);
-
         drawReservePieces(g2, 92, 228, game.getReserveCount(Player.COLOR_ONE), Player.COLOR_ONE);
     }
 
@@ -258,7 +284,6 @@ public class DaraPanel extends JPanel {
         g2.setColor(INK);
         g2.setFont(new Font("Serif", Font.BOLD, 30));
         g2.drawString(game.getPlayerOneName(), 866, 536);
-
         drawReservePieces(g2, 856, 178, game.getReserveCount(Player.COLOR_TWO), Player.COLOR_TWO);
     }
 
@@ -288,6 +313,11 @@ public class DaraPanel extends JPanel {
     private void drawPiece(Graphics2D g2, int centerX, int centerY, int radius, Player player) {
         Color primary = player == Player.COLOR_ONE ? PLAYER_ONE : PLAYER_TWO;
         Color shadow = player == Player.COLOR_ONE ? PLAYER_ONE_SHADOW : PLAYER_TWO_SHADOW;
+
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.24f));
+        g2.setColor(new Color(22, 14, 8));
+        g2.fillOval(centerX - radius - 5, centerY - radius + 8, radius * 2 + 10, radius * 2 + 12);
+        g2.setComposite(AlphaComposite.SrcOver);
 
         g2.setColor(new Color(247, 233, 204));
         g2.fill(new Ellipse2D.Double(centerX - radius - 6, centerY - radius - 6, (radius + 6) * 2.0, (radius + 6) * 2.0));
@@ -330,10 +360,46 @@ public class DaraPanel extends JPanel {
     }
 
     private void drawStatusLines(Graphics2D g2) {
+        g2.setColor(Color.BLACK);
+        g2.setFont(new Font("Serif", Font.BOLD, 22));
+        drawCenteredText(g2, playerMessage, new Rectangle(BOARD_X - 100, 142, BOARD_WIDTH + 200, 26));
+
         g2.setColor(new Color(74, 48, 24));
-        g2.setFont(new Font("Serif", Font.BOLD, 18));
-        drawCenteredText(g2, playerMessage, new Rectangle(BOARD_X - 80, 146, BOARD_WIDTH + 160, 22));
+        g2.setFont(new Font("Serif", Font.BOLD, 17));
         drawCenteredText(g2, opponentMessage, new Rectangle(BOARD_X - 80, 168, BOARD_WIDTH + 160, 22));
+    }
+
+    private void drawFinishedOverlay(Graphics2D g2) {
+        Rectangle overlayBounds = new Rectangle(BOARD_X - 28, 126, BOARD_WIDTH + 56, BOARD_HEIGHT + 110);
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.52f));
+        g2.setColor(new Color(73, 54, 35));
+        g2.fillRoundRect(overlayBounds.x, overlayBounds.y, overlayBounds.width, overlayBounds.height, 24, 24);
+        g2.setComposite(AlphaComposite.SrcOver);
+
+        g2.setColor(new Color(255, 245, 222));
+        g2.setFont(new Font("Serif", Font.BOLD, 34));
+        drawCenteredText(g2, game.getCurrentTurnName() + " e o vencedor", new Rectangle(BOARD_X - 40, BOARD_Y + 116, BOARD_WIDTH + 80, 40));
+    }
+
+    private void drawActiveAnimation(Graphics2D g2) {
+        if (activeAnimation == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (activeAnimation.isFinished(now)) {
+            return;
+        }
+        double progress = activeAnimation.progress(now);
+        int x = (int) Math.round(activeAnimation.fromX + (activeAnimation.toX - activeAnimation.fromX) * progress);
+        int y = (int) Math.round(activeAnimation.fromY + (activeAnimation.toY - activeAnimation.fromY) * progress);
+        drawPiece(g2, x, y, 18, activeAnimation.player);
+    }
+
+    private boolean isAnimatedDestination(int row, int column) {
+        return activeAnimation != null
+                && !activeAnimation.isFinished(System.currentTimeMillis())
+                && activeAnimation.targetRow == row
+                && activeAnimation.targetColumn == column;
     }
 
     private String getDisplayStateText() {
@@ -404,17 +470,14 @@ public class DaraPanel extends JPanel {
             return null;
         }
 
-        int margin = BOARD_MARGIN;
-        int gap = BOARD_GAP;
-        int cellWidth = (boardBounds.width - margin * 2 - gap * (Board.COLUMNS - 1)) / Board.COLUMNS;
-        int cellHeight = (boardBounds.height - margin * 2 - gap * (Board.ROWS - 1)) / Board.ROWS;
+        int cellWidth = (boardBounds.width - BOARD_MARGIN * 2 - BOARD_GAP * (Board.COLUMNS - 1)) / Board.COLUMNS;
+        int cellHeight = (boardBounds.height - BOARD_MARGIN * 2 - BOARD_GAP * (Board.ROWS - 1)) / Board.ROWS;
 
         for (int row = 0; row < Board.ROWS; row++) {
             for (int column = 0; column < Board.COLUMNS; column++) {
-                int x = boardBounds.x + margin + column * (cellWidth + gap);
-                int y = boardBounds.y + margin + row * (cellHeight + gap);
-                Rectangle cellBounds = new Rectangle(x, y, cellWidth, cellHeight);
-                if (cellBounds.contains(mouseX, mouseY)) {
+                int x = boardBounds.x + BOARD_MARGIN + column * (cellWidth + BOARD_GAP);
+                int y = boardBounds.y + BOARD_MARGIN + row * (cellHeight + BOARD_GAP);
+                if (new Rectangle(x, y, cellWidth, cellHeight).contains(mouseX, mouseY)) {
                     return new BoardCell(row, column);
                 }
             }
@@ -481,6 +544,18 @@ public class DaraPanel extends JPanel {
         }
 
         game.placePiece(selectedReservePlayer, cell.row, cell.column);
+        BoardCenter start = getReserveAnimationStart(selectedReservePlayer);
+        startAnimation(selectedReservePlayer, start.x, start.y, cell.row, cell.column);
+        gameActionSender.send(new GameAction(
+                GameActionType.PLACE,
+                toPlayerSlot(selectedReservePlayer),
+                cell.row,
+                cell.column,
+                -1,
+                -1,
+                -1,
+                -1
+        ));
         selectedReservePlayer = null;
         selectedBoardCell = null;
         updateStatusMessages();
@@ -497,7 +572,18 @@ public class DaraPanel extends JPanel {
                 return;
             }
 
-            game.removeOpponentPiece(game.getCurrentTurn(), cell.row, cell.column);
+            Player actingPlayer = game.getCurrentTurn();
+            game.removeOpponentPiece(actingPlayer, cell.row, cell.column);
+            gameActionSender.send(new GameAction(
+                    GameActionType.REMOVE,
+                    toPlayerSlot(actingPlayer),
+                    cell.row,
+                    cell.column,
+                    -1,
+                    -1,
+                    -1,
+                    -1
+            ));
             selectedBoardCell = null;
             updateStatusMessages();
             repaint();
@@ -529,7 +615,21 @@ public class DaraPanel extends JPanel {
             return;
         }
 
-        game.movePiece(game.getCurrentTurn(), selectedBoardCell.row, selectedBoardCell.column, cell.row, cell.column);
+        BoardCell fromCell = selectedBoardCell;
+        Player actingPlayer = game.getCurrentTurn();
+        game.movePiece(actingPlayer, fromCell.row, fromCell.column, cell.row, cell.column);
+        BoardCenter start = getCellCenter(fromCell.row, fromCell.column);
+        startAnimation(actingPlayer, start.x, start.y, cell.row, cell.column);
+        gameActionSender.send(new GameAction(
+                GameActionType.MOVE,
+                toPlayerSlot(actingPlayer),
+                -1,
+                -1,
+                fromCell.row,
+                fromCell.column,
+                cell.row,
+                cell.column
+        ));
         selectedBoardCell = null;
         updateStatusMessages();
         repaint();
@@ -539,23 +639,37 @@ public class DaraPanel extends JPanel {
         if (game.getState() == dara.model.GameState.PLACING) {
             playerMessage = game.getCurrentTurnName() + ": selecione uma peca da reserva.";
             opponentMessage = game.getWaitingPlayerName() + ": aguardando jogada do oponente.";
+            syncUiState();
             return;
         }
 
         if (game.getState() == dara.model.GameState.FINISHED) {
             playerMessage = game.getCurrentTurnName() + ": venceu a partida.";
-            opponentMessage = game.getWaitingPlayerName() + ": ficou com apenas 2 pecas.";
+            opponentMessage = game.getWaitingPlayerName() + ": partida encerrada.";
+            syncUiState();
             return;
         }
 
         if (game.isAwaitingRemoval()) {
             playerMessage = game.getCurrentTurnName() + ": formou linha de 3. Remova uma peca adversaria.";
             opponentMessage = game.getWaitingPlayerName() + ": aguardando remocao.";
+            syncUiState();
             return;
         }
 
         playerMessage = game.getCurrentTurnName() + ": selecione uma peca para mover.";
         opponentMessage = game.getWaitingPlayerName() + ": aguardando jogada do oponente.";
+        syncUiState();
+    }
+
+    private void syncUiState() {
+        boolean finished = game.getState() == dara.model.GameState.FINISHED;
+        boolean allowRandomPhase = game.getState() == dara.model.GameState.PLACING && !randomPhaseUsed;
+
+        randomPhaseButton.setEnabled(allowRandomPhase);
+        surrenderButton.setEnabled(!finished);
+        restartButton.setVisible(finished);
+        restartButton.setEnabled(finished);
     }
 
     public void appendChatMessage(String senderName, String text) {
@@ -570,8 +684,12 @@ public class DaraPanel extends JPanel {
         repaint();
     }
 
-    public void appendTestOutgoingMessage() {
-        appendChatMessage(game.getPlayerOneName(), "Mensagem simulada do jogador local.");
+    public Game getGame() {
+        return game;
+    }
+
+    public void refreshStatus() {
+        updateStatusMessages();
     }
 
     private JTextArea createChatTextArea() {
@@ -604,9 +722,9 @@ public class DaraPanel extends JPanel {
         field.setForeground(INK);
         field.setBackground(new Color(245, 220, 180, 230));
         field.setCaretColor(INK);
-        field.setBorder(javax.swing.BorderFactory.createCompoundBorder(
-                javax.swing.BorderFactory.createLineBorder(new Color(138, 92, 52), 2, true),
-                javax.swing.BorderFactory.createEmptyBorder(4, 10, 4, 10)
+        field.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(138, 92, 52), 2, true),
+                BorderFactory.createEmptyBorder(4, 10, 4, 10)
         ));
         field.addActionListener(event -> submitChatMessage(slot, field));
         return field;
@@ -636,9 +754,9 @@ public class DaraPanel extends JPanel {
         return icon;
     }
 
-    private JButton createHelperButton(String text, int x, int y, java.awt.event.ActionListener listener) {
+    private JButton createHelperButton(String text, int x, int y, int width, ActionListener listener) {
         JButton button = new JButton(text);
-        button.setBounds(x, y, "Auto Fase".equals(text) ? 96 : 78, 34);
+        button.setBounds(x, y, width, 34);
         button.setFont(new Font("Serif", Font.BOLD, 13));
         button.setFocusPainted(false);
         button.setForeground(INK);
@@ -662,12 +780,62 @@ public class DaraPanel extends JPanel {
             game.randomizePlacingPhase();
             selectedReservePlayer = null;
             selectedBoardCell = null;
+            randomPhaseUsed = true;
             updateStatusMessages();
             appendChatMessage("Sistema", "Helper: fase de colocacao preenchida aleatoriamente.");
             repaint();
         } catch (IllegalStateException exception) {
             appendChatMessage("Sistema", "Helper: nao foi possivel gerar a fase aleatoria.");
         }
+    }
+
+    private void surrenderMatch() {
+        Player surrenderingPlayer = game.getCurrentTurn();
+        game.applyRemoteSurrender(surrenderingPlayer);
+        gameActionSender.send(new GameAction(
+                GameActionType.SURRENDER,
+                toPlayerSlot(surrenderingPlayer),
+                -1,
+                -1,
+                -1,
+                -1,
+                -1,
+                -1
+        ));
+        updateStatusMessages();
+        repaint();
+    }
+
+    private void startAnimation(Player player, int fromX, int fromY, int toRow, int toColumn) {
+        BoardCenter target = getCellCenter(toRow, toColumn);
+        activeAnimation = new PieceAnimation(player, fromX, fromY, target.x, target.y, toRow, toColumn, System.currentTimeMillis(), 220L);
+        if (animationTimer != null) {
+            animationTimer.stop();
+        }
+        animationTimer = new Timer(16, event -> {
+            if (activeAnimation == null || activeAnimation.isFinished(System.currentTimeMillis())) {
+                activeAnimation = null;
+                ((Timer) event.getSource()).stop();
+            }
+            repaint();
+        });
+        animationTimer.start();
+    }
+
+    private BoardCenter getCellCenter(int row, int column) {
+        int cellWidth = (BOARD_WIDTH - BOARD_MARGIN * 2 - BOARD_GAP * (Board.COLUMNS - 1)) / Board.COLUMNS;
+        int cellHeight = (BOARD_HEIGHT - BOARD_MARGIN * 2 - BOARD_GAP * (Board.ROWS - 1)) / Board.ROWS;
+        int x = BOARD_X + BOARD_MARGIN + column * (cellWidth + BOARD_GAP) + cellWidth / 2;
+        int y = BOARD_Y + BOARD_MARGIN + row * (cellHeight + BOARD_GAP) + cellHeight / 2;
+        return new BoardCenter(x, y);
+    }
+
+    private BoardCenter getReserveAnimationStart(Player player) {
+        return player == Player.COLOR_ONE ? new BoardCenter(92, 228) : new BoardCenter(856, 178);
+    }
+
+    private PlayerSlot toPlayerSlot(Player player) {
+        return player == Player.COLOR_TWO ? PlayerSlot.PLAYER_1 : PlayerSlot.PLAYER_2;
     }
 
     private static final class BoardCell {
@@ -680,6 +848,16 @@ public class DaraPanel extends JPanel {
         }
     }
 
+    private static final class BoardCenter {
+        private final int x;
+        private final int y;
+
+        private BoardCenter(int x, int y) {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
     private static final class ReservePieceHitBox {
         private final Player player;
         private final Rectangle bounds;
@@ -687,6 +865,39 @@ public class DaraPanel extends JPanel {
         private ReservePieceHitBox(Player player, Rectangle bounds) {
             this.player = player;
             this.bounds = bounds;
+        }
+    }
+
+    private static final class PieceAnimation {
+        private final Player player;
+        private final int fromX;
+        private final int fromY;
+        private final int toX;
+        private final int toY;
+        private final int targetRow;
+        private final int targetColumn;
+        private final long startedAt;
+        private final long durationMs;
+
+        private PieceAnimation(Player player, int fromX, int fromY, int toX, int toY, int targetRow, int targetColumn, long startedAt, long durationMs) {
+            this.player = player;
+            this.fromX = fromX;
+            this.fromY = fromY;
+            this.toX = toX;
+            this.toY = toY;
+            this.targetRow = targetRow;
+            this.targetColumn = targetColumn;
+            this.startedAt = startedAt;
+            this.durationMs = durationMs;
+        }
+
+        private double progress(long now) {
+            double value = (double) (now - startedAt) / durationMs;
+            return Math.max(0.0, Math.min(1.0, value));
+        }
+
+        private boolean isFinished(long now) {
+            return now - startedAt >= durationMs;
         }
     }
 
