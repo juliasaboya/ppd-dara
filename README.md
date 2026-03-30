@@ -11,8 +11,21 @@ Implementacao do jogo Dara em Java com interface Swing e comunicacao via sockets
 O projeto possui um script para gerar o `.jar` executável:
 
 ```bash
-cd [DIRETÓRIO DO PROJETO]
+cd [DIRETORIO_DO_PROJETO]
 ./build-jar.sh
+```
+
+Se o sistema retornar `permission denied` ao executar `./build-jar.sh`, use uma destas alternativas:
+
+```bash
+chmod +x build-jar.sh
+./build-jar.sh
+```
+
+ou
+
+```bash
+bash build-jar.sh
 ```
 
 O script gera:
@@ -25,6 +38,7 @@ O script gera:
 Depois de gerar o executavel:
 
 ```bash
+cd dist
 java -jar dara-game.jar
 ```
 
@@ -60,4 +74,3 @@ Depois disso:
 Observação:
 
 - se o slot do cliente nao for informado, o programa tenta `PLAYER_1` e depois `PLAYER_2`
-
