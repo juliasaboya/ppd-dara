@@ -37,10 +37,6 @@ public class Game {
         return board;
     }
 
-    public Instant getStartedAt() {
-        return startedAt;
-    }
-
     public long getElapsedSeconds() {
         return Duration.between(startedAt, Instant.now()).getSeconds();
     }
@@ -62,13 +58,6 @@ public class Game {
 
     public GameState getState() {
         return state;
-    }
-
-    public void setState(GameState state) {
-        if (state == null) {
-            throw new IllegalArgumentException("Estado nao pode ser nulo.");
-        }
-        this.state = state;
     }
 
     public int getReserveCount(Player player) {

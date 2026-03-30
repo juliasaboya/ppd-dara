@@ -7,6 +7,7 @@ import dara.transport.socket.SocketMessageChannel;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.Socket;
+import java.net.UnknownHostException;
 
 public class Client implements Closeable {
     public interface ChatListener {
@@ -91,19 +92,64 @@ public class Client implements Closeable {
     }
 
     public static void main(String[] args) {
-        String host = args.length > 0 ? args[0] : "localhost";
-        int port = args.length > 1 ? Integer.parseInt(args[1]) : Server.DEFAULT_PORT;
-        PlayerSlot slot = args.length > 2 ? PlayerSlot.valueOf(args[2].toUpperCase()) : PlayerSlot.PLAYER_1;
+        try {
+            LaunchOptions options = parseLaunchOptions(args);
+            runStandalone(options);
+        } catch (IllegalArgumentException exception) {
+            System.err.println("Erro nos argumentos: " + exception.getMessage());
+            printUsage();
+        }
+    }
 
-        try (Client client = new Client(host, port, slot)) {
+    private static LaunchOptions parseLaunchOptions(String[] args) {
+        String host = args.length > 0 ? args[0] : "localhost";
+        int port = Server.DEFAULT_PORT;
+        PlayerSlot slot = PlayerSlot.PLAYER_1;
+
+        if (args.length > 1) {
+            try {
+                port = Integer.parseInt(args[1]);
+            } catch (NumberFormatException exception) {
+                throw new IllegalArgumentException("porta invalida: " + args[1]);
+            }
+            if (port < 1 || port > 65535) {
+                throw new IllegalArgumentException("porta fora do intervalo permitido: " + port);
+            }
+        }
+
+        if (args.length > 2) {
+            try {
+                slot = PlayerSlot.valueOf(args[2].trim().toUpperCase());
+            } catch (IllegalArgumentException exception) {
+                throw new IllegalArgumentException("slot invalido: " + args[2] + ". Use PLAYER_1 ou PLAYER_2.");
+            }
+        }
+
+        return new LaunchOptions(host, port, slot);
+    }
+
+    private static void runStandalone(LaunchOptions options) {
+        try (Client client = new Client(options.host, options.port, options.slot)) {
             boolean connected = client.connect();
             System.out.println("Cliente standalone conectado: " + connected);
             if (connected) {
                 System.out.println("Pressione Ctrl+C para encerrar.");
                 Thread.sleep(Long.MAX_VALUE);
             }
-        } catch (Exception exception) {
-            exception.printStackTrace();
+        } catch (UnknownHostException exception) {
+            System.err.println("Host nao encontrado: " + options.host);
+        } catch (IOException exception) {
+            System.err.println("Falha de conexao com " + options.host + ":" + options.port + ": " + exception.getMessage());
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            System.err.println("Cliente encerrado.");
         }
+    }
+
+    private static void printUsage() {
+        System.err.println("Uso: java dara.network.Client [host] [porta] [PLAYER_1|PLAYER_2]");
+    }
+
+    private record LaunchOptions(String host, int port, PlayerSlot slot) {
     }
 }

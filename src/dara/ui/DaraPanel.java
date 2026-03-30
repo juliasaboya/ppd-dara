@@ -78,7 +78,6 @@ public class DaraPanel extends JPanel {
     private static final int CHAT_X = 246;
     private static final int CHAT_Y = 567;
     private static final int CHAT_WIDTH = 589;
-    private static final int CHAT_HEIGHT = 201;
     private static final int SIDE_CHAT_WIDTH = 180;
     private static final int LEFT_CHAT_X = 18;
     private static final int LEFT_CHAT_Y = 92;
@@ -86,22 +85,16 @@ public class DaraPanel extends JPanel {
 
     private static final SVGDocument TOP_BANNER_SVG = loadSvg("/dara/ui/images/old_paper_scroll_set.svg");
     private static final SVGDocument CHAT_BOX_SVG = loadSvg("/dara/ui/images/ChatBox.svg");
-    private static final Image BACKGROUND_IMAGE = loadImage("/dara/ui/images/fundo_areia.png");
+    private static final Image BACKGROUND_IMAGE = loadImage();
 
     private final List<ReservePieceHitBox> reserveHitBoxes;
     private final ChatSender chatSender;
     private final GameActionSender gameActionSender;
-    private final Runnable restartToLobbyAction;
     private final Game game;
     private final JButton randomPhaseButton;
     private final JButton surrenderButton;
     private final JButton restartButton;
-    private final JTextField playerOneChatField;
-    private final JTextField playerTwoChatField;
-    private final JComponent playerOneChatIcon;
-    private final JComponent playerTwoChatIcon;
     private final JTextArea chatTextArea;
-    private final JScrollPane chatScrollPane;
     private String playerMessage;
     private String opponentMessage;
     private Player selectedReservePlayer;
@@ -114,25 +107,24 @@ public class DaraPanel extends JPanel {
         this.game = game;
         this.chatSender = chatSender;
         this.gameActionSender = gameActionSender;
-        this.restartToLobbyAction = restartToLobbyAction;
         this.reserveHitBoxes = new ArrayList<>();
 
         setPreferredSize(new Dimension(PANEL_WIDTH, PANEL_HEIGHT));
         setBackground(SAND_LIGHT);
         setLayout(null);
 
-        randomPhaseButton = createHelperButton("Auto Fase", TOP_BANNER_X + 384, TOP_BANNER_MARGIN + 24, 96, event -> runRandomPhaseHelper());
-        surrenderButton = createHelperButton("Desistir", TOP_BANNER_X + 384, TOP_BANNER_MARGIN + 64, 96, event -> surrenderMatch());
-        restartButton = createHelperButton("Novo Jogo", BOARD_X + 168, BOARD_Y + 214, 140, event -> restartToLobbyAction.run());
+        randomPhaseButton = createHelperButton("Auto Fase", TOP_BANNER_X + 384, TOP_BANNER_MARGIN + 24, 96, _ -> runRandomPhaseHelper());
+        surrenderButton = createHelperButton("Desistir", TOP_BANNER_X + 384, TOP_BANNER_MARGIN + 64, 96, _ -> surrenderMatch());
+        restartButton = createHelperButton("Novo Jogo", BOARD_X + 168, BOARD_Y + 214, 140, _ -> restartToLobbyAction.run());
         restartButton.setVisible(false);
 
-        playerTwoChatIcon = createMessageIcon(LEFT_CHAT_X, LEFT_CHAT_Y);
-        playerTwoChatField = createSideChatField(LEFT_CHAT_X + 30, LEFT_CHAT_Y, PlayerSlot.PLAYER_2);
-        playerOneChatIcon = createMessageIcon(864, RIGHT_CHAT_Y);
-        playerOneChatField = createSideChatField(894, RIGHT_CHAT_Y, PlayerSlot.PLAYER_1);
+        JComponent playerTwoChatIcon = createMessageIcon(LEFT_CHAT_X, LEFT_CHAT_Y);
+        JTextField playerTwoChatField = createSideChatField(LEFT_CHAT_X + 30, LEFT_CHAT_Y, PlayerSlot.PLAYER_2);
+        JComponent playerOneChatIcon = createMessageIcon(864, RIGHT_CHAT_Y);
+        JTextField playerOneChatField = createSideChatField(894, RIGHT_CHAT_Y, PlayerSlot.PLAYER_1);
 
         chatTextArea = createChatTextArea();
-        chatScrollPane = createChatScrollPane(chatTextArea);
+        JScrollPane chatScrollPane = createChatScrollPane(chatTextArea);
 
         add(randomPhaseButton);
         add(surrenderButton);
@@ -184,7 +176,7 @@ public class DaraPanel extends JPanel {
     }
 
     private void drawTopBanner(Graphics2D g2) {
-        Rectangle bounds = drawSvgCentered(g2, TOP_BANNER_SVG, TOP_BANNER_MARGIN);
+        Rectangle bounds = drawSvgCentered(g2);
 
         g2.setFont(new Font("Serif", Font.BOLD, 32));
         g2.setColor(INK);
@@ -214,7 +206,7 @@ public class DaraPanel extends JPanel {
 
                 Player piece = game.getBoard().getPiece(row, column);
                 if (piece != null && !isAnimatedDestination(row, column)) {
-                    int pieceSize = Math.min(cellWidth, cellHeight) - 28;
+                    int pieceSize = cellHeight - 28;
                     drawPiece(g2, x + cellWidth / 2, y + cellHeight / 2, pieceSize / 2, piece);
                 }
             }
@@ -307,7 +299,7 @@ public class DaraPanel extends JPanel {
     }
 
     private void drawChatBox(Graphics2D g2) {
-        drawSvgBottomCentered(g2, CHAT_BOX_SVG);
+        drawSvgBottomCentered(g2);
     }
 
     private void drawPiece(Graphics2D g2, int centerX, int centerY, int radius, Player player) {
@@ -378,7 +370,7 @@ public class DaraPanel extends JPanel {
 
         g2.setColor(new Color(255, 245, 222));
         g2.setFont(new Font("Serif", Font.BOLD, 34));
-        drawCenteredText(g2, game.getCurrentTurnName() + " e o vencedor", new Rectangle(BOARD_X - 40, BOARD_Y + 116, BOARD_WIDTH + 80, 40));
+        drawCenteredText(g2, game.getCurrentTurnName() + " é o(a) vencedor(a)!", new Rectangle(BOARD_X - 40, BOARD_Y + 116, BOARD_WIDTH + 80, 40));
     }
 
     private void drawActiveAnimation(Graphics2D g2) {
@@ -411,22 +403,21 @@ public class DaraPanel extends JPanel {
         };
     }
 
-    private Rectangle drawSvgCentered(Graphics2D g2, SVGDocument document, int topMargin) {
-        int width = (int) Math.round(document.size().width * SVG_SCALE);
-        int height = (int) Math.round(document.size().height * SVG_SCALE);
+    private Rectangle drawSvgCentered(Graphics2D g2) {
+        int width = (int) Math.round(DaraPanel.TOP_BANNER_SVG.size().width * SVG_SCALE);
+        int height = (int) Math.round(DaraPanel.TOP_BANNER_SVG.size().height * SVG_SCALE);
         int x = (getWidth() - width) / 2;
-        int y = topMargin;
-        renderSvg(g2, document, x, y, width, height);
+        int y = DaraPanel.TOP_BANNER_MARGIN;
+        renderSvg(g2, DaraPanel.TOP_BANNER_SVG, x, y, width, height);
         return new Rectangle(x, y, width, height);
     }
 
-    private Rectangle drawSvgBottomCentered(Graphics2D g2, SVGDocument document) {
-        int width = (int) Math.round(document.size().width * SVG_SCALE);
-        int height = (int) Math.round(document.size().height * SVG_SCALE);
+    private void drawSvgBottomCentered(Graphics2D g2) {
+        int width = (int) Math.round(DaraPanel.CHAT_BOX_SVG.size().width * SVG_SCALE);
+        int height = (int) Math.round(DaraPanel.CHAT_BOX_SVG.size().height * SVG_SCALE);
         int x = (getWidth() - width) / 2;
         int y = getHeight() - height;
-        renderSvg(g2, document, x, y, width, height);
-        return new Rectangle(x, y, width, height);
+        renderSvg(g2, DaraPanel.CHAT_BOX_SVG, x, y, width, height);
     }
 
     private void renderSvg(Graphics2D g2, SVGDocument document, int x, int y, int width, int height) {
@@ -448,8 +439,8 @@ public class DaraPanel extends JPanel {
         return document;
     }
 
-    private static Image loadImage(String resourcePath) {
-        URL resource = DaraPanel.class.getResource(resourcePath);
+    private static Image loadImage() {
+        URL resource = DaraPanel.class.getResource("/dara/ui/images/fundo_areia.png");
         if (resource == null) {
             return null;
         }
@@ -726,7 +717,7 @@ public class DaraPanel extends JPanel {
                 BorderFactory.createLineBorder(new Color(138, 92, 52), 2, true),
                 BorderFactory.createEmptyBorder(4, 10, 4, 10)
         ));
-        field.addActionListener(event -> submitChatMessage(slot, field));
+        field.addActionListener(_ -> submitChatMessage(slot, field));
         return field;
     }
 
@@ -838,68 +829,27 @@ public class DaraPanel extends JPanel {
         return player == Player.COLOR_TWO ? PlayerSlot.PLAYER_1 : PlayerSlot.PLAYER_2;
     }
 
-    private static final class BoardCell {
-        private final int row;
-        private final int column;
-
-        private BoardCell(int row, int column) {
-            this.row = row;
-            this.column = column;
-        }
+    private record BoardCell(int row, int column) {
     }
 
-    private static final class BoardCenter {
-        private final int x;
-        private final int y;
-
-        private BoardCenter(int x, int y) {
-            this.x = x;
-            this.y = y;
-        }
+    private record BoardCenter(int x, int y) {
     }
 
-    private static final class ReservePieceHitBox {
-        private final Player player;
-        private final Rectangle bounds;
-
-        private ReservePieceHitBox(Player player, Rectangle bounds) {
-            this.player = player;
-            this.bounds = bounds;
-        }
+    private record ReservePieceHitBox(Player player, Rectangle bounds) {
     }
 
-    private static final class PieceAnimation {
-        private final Player player;
-        private final int fromX;
-        private final int fromY;
-        private final int toX;
-        private final int toY;
-        private final int targetRow;
-        private final int targetColumn;
-        private final long startedAt;
-        private final long durationMs;
-
-        private PieceAnimation(Player player, int fromX, int fromY, int toX, int toY, int targetRow, int targetColumn, long startedAt, long durationMs) {
-            this.player = player;
-            this.fromX = fromX;
-            this.fromY = fromY;
-            this.toX = toX;
-            this.toY = toY;
-            this.targetRow = targetRow;
-            this.targetColumn = targetColumn;
-            this.startedAt = startedAt;
-            this.durationMs = durationMs;
-        }
+    private record PieceAnimation(Player player, int fromX, int fromY, int toX, int toY, int targetRow,
+                                  int targetColumn, long startedAt, long durationMs) {
 
         private double progress(long now) {
-            double value = (double) (now - startedAt) / durationMs;
-            return Math.max(0.0, Math.min(1.0, value));
-        }
+                double value = (double) (now - startedAt) / durationMs;
+                return Math.max(0.0, Math.min(1.0, value));
+            }
 
-        private boolean isFinished(long now) {
-            return now - startedAt >= durationMs;
+            private boolean isFinished(long now) {
+                return now - startedAt >= durationMs;
+            }
         }
-    }
 
     private final class BoardMouseHandler extends MouseAdapter {
         @Override
@@ -911,40 +861,27 @@ public class DaraPanel extends JPanel {
         }
     }
 
-    private static final class ShapeFactory {
-        private final int centerX;
-        private final int centerY;
-        private final int outerRadius;
-        private final int innerRadius;
-        private final int points;
-
-        private ShapeFactory(int centerX, int centerY, int outerRadius, int innerRadius, int points) {
-            this.centerX = centerX;
-            this.centerY = centerY;
-            this.outerRadius = outerRadius;
-            this.innerRadius = innerRadius;
-            this.points = points;
-        }
+    private record ShapeFactory(int centerX, int centerY, int outerRadius, int innerRadius, int points) {
 
         private GeneralPath create() {
-            GeneralPath path = new GeneralPath();
-            double angleStep = Math.PI / points;
+                GeneralPath path = new GeneralPath();
+                double angleStep = Math.PI / points;
 
-            for (int i = 0; i < points * 2; i++) {
-                double angle = -Math.PI / 2 + i * angleStep;
-                int radius = i % 2 == 0 ? outerRadius : innerRadius;
-                double px = centerX + Math.cos(angle) * radius;
-                double py = centerY + Math.sin(angle) * radius;
+                for (int i = 0; i < points * 2; i++) {
+                    double angle = -Math.PI / 2 + i * angleStep;
+                    int radius = i % 2 == 0 ? outerRadius : innerRadius;
+                    double px = centerX + Math.cos(angle) * radius;
+                    double py = centerY + Math.sin(angle) * radius;
 
-                if (i == 0) {
-                    path.moveTo(px, py);
-                } else {
-                    path.lineTo(px, py);
+                    if (i == 0) {
+                        path.moveTo(px, py);
+                    } else {
+                        path.lineTo(px, py);
+                    }
                 }
-            }
 
-            path.closePath();
-            return path;
+                path.closePath();
+                return path;
+            }
         }
-    }
 }
