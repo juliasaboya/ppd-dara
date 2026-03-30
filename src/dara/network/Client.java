@@ -105,6 +105,7 @@ public class Client implements Closeable {
         String host = args.length > 0 ? args[0] : "localhost";
         int port = Server.DEFAULT_PORT;
         PlayerSlot slot = PlayerSlot.PLAYER_1;
+        boolean slotProvided = false;
 
         if (args.length > 1) {
             try {
@@ -120,36 +121,55 @@ public class Client implements Closeable {
         if (args.length > 2) {
             try {
                 slot = PlayerSlot.valueOf(args[2].trim().toUpperCase());
+                slotProvided = true;
             } catch (IllegalArgumentException exception) {
                 throw new IllegalArgumentException("slot invalido: " + args[2] + ". Use PLAYER_1 ou PLAYER_2.");
             }
         }
 
-        return new LaunchOptions(host, port, slot);
+        return new LaunchOptions(host, port, slot, slotProvided);
     }
 
     private static void runStandalone(LaunchOptions options) {
-        try (Client client = new Client(options.host, options.port, options.slot)) {
+        if (!options.slotProvided) {
+            PlayerSlot[] fallbackOrder = {PlayerSlot.PLAYER_1, PlayerSlot.PLAYER_2};
+            for (PlayerSlot slot : fallbackOrder) {
+                if (tryStandaloneConnection(options.host, options.port, slot)) {
+                    return;
+                }
+            }
+            System.err.println("Nenhuma vaga disponivel para conexao standalone.");
+            return;
+        }
+
+        tryStandaloneConnection(options.host, options.port, options.slot);
+    }
+
+    private static boolean tryStandaloneConnection(String host, int port, PlayerSlot slot) {
+        try (Client client = new Client(host, port, slot)) {
             boolean connected = client.connect();
             System.out.println("Cliente standalone conectado: " + connected);
-            if (connected) {
-                System.out.println("Pressione Ctrl+C para encerrar.");
-                Thread.sleep(Long.MAX_VALUE);
+            if (!connected) {
+                return false;
             }
+            System.out.println("Pressione Ctrl+C para encerrar.");
+            Thread.sleep(Long.MAX_VALUE);
+            return true;
         } catch (UnknownHostException exception) {
-            System.err.println("Host nao encontrado: " + options.host);
+            System.err.println("Host nao encontrado: " + host);
         } catch (IOException exception) {
-            System.err.println("Falha de conexao com " + options.host + ":" + options.port + ": " + exception.getMessage());
+            System.err.println("Falha de conexao com " + host + ":" + port + ": " + exception.getMessage());
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             System.err.println("Cliente encerrado.");
         }
+        return false;
     }
 
     private static void printUsage() {
         System.err.println("Uso: java dara.network.Client [host] [porta] [PLAYER_1|PLAYER_2]");
     }
 
-    private record LaunchOptions(String host, int port, PlayerSlot slot) {
+    private record LaunchOptions(String host, int port, PlayerSlot slot, boolean slotProvided) {
     }
 }
