@@ -1,0 +1,3 @@
+Main-Class: Main
+Class-Path: lib/jsvg-2.0.0.jar
+
