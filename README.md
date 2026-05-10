@@ -1,76 +1,37 @@
-# Dara Socket
+# Dara Game 2.0 - comunicação RPC
 
-Implementacao do jogo Dara em Java com interface Swing e comunicacao via sockets.
+Implementacao do jogo Dara em Java com interface Swing e comunicacao via Java RMI.
 
 ## Requisitos
 
 - Java 17 ou superior
 
-## Gerar O Executável
+## Como executar?
 
-O projeto possui um script para gerar o `.jar` executável:
-
-```bash
-cd [DIRETORIO_DO_PROJETO]
-./build-jar.sh
-```
-
-Se o sistema retornar `permission denied` ao executar `./build-jar.sh`, use uma destas alternativas:
-
-```bash
-chmod +x build-jar.sh
-./build-jar.sh
-```
-
-ou
-
-```bash
-bash build-jar.sh
-```
-
-O script gera:
-
-- `dist/dara-game.jar`
-- `dist/lib/jsvg-2.0.0.jar`
-
-## Executar O .jar
-
-Depois de gerar o executavel:
-
-```bash
-cd dist
-java -jar dara-game.jar
-```
-
-## Executar Via Terminal
-
-Esse modo serve para demonstrar a conexao TCP/IP entre clientes e servidor e a troca de mensagens pelo terminal.
+Servidor RMI e os clientes rodam em processos separados.
 IMPORTANTE: Executar os comandos a seguir no diretório em que o projeto se encontra.
 
-No terminal 1, inicie o servidor:
+No terminal 1, gerar o executável e iniciar o servidor/registrador:
 
 ```bash
-java -cp "src:lib/jsvg-2.0.0.jar" dara.network.Server
+./build-jar.sh
+java -cp "build/classes:lib/jsvg-2.0.0.jar" dara.comunication.network.ServerRegistrar 1024
 ```
 
-No terminal 2, inicie o primeiro cliente:
+No terminal 2, inicie o primeiro cliente Swing:
 
 ```bash
-java -cp "src:lib/jsvg-2.0.0.jar" dara.network.Client localhost 1024 PLAYER_1
+java -cp "build/classes:lib/jsvg-2.0.0.jar" Main localhost 1024
 ```
 
-No terminal 3, inicie o segundo cliente:
+No terminal 3, inicie o segundo cliente Swing:
 
 ```bash
-java -cp "src:lib/jsvg-2.0.0.jar" dara.network.Client localhost 1024 PLAYER_2
+java -cp "build/classes:lib/jsvg-2.0.0.jar" Main localhost 1024
 ```
 
-Depois disso:
+Fluxo esperado:
 
-- digite uma mensagem em um dos terminais cliente e pressione Enter
-- a mensagem sera recebida no outro cliente
-- use `/sair` para encerrar um cliente standalone
-
-Observação:
-
-- se o slot do cliente nao for informado, o programa tenta `PLAYER_1` e depois `PLAYER_2`
+- cada cliente abre seu próprio lobby
+- ao clicar em `Procurar Partida`, o cliente entra na fila e exibe `Procurando Partida` com contador em segundos
+- quando o servidor detectar dois clientes conectados, ele atribui `PLAYER_1` e `PLAYER_2` automaticamente e inicia a partida para ambos

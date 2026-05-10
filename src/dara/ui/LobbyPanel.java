@@ -3,11 +3,10 @@ package dara.ui;
 import com.github.weisj.jsvg.SVGDocument;
 import com.github.weisj.jsvg.parser.SVGLoader;
 import com.github.weisj.jsvg.view.ViewBox;
-import dara.network.PlayerSlot;
+import dara.comunication.network.PlayerSlot;
 
 import javax.swing.JButton;
 import javax.swing.JPanel;
-import javax.swing.JTextField;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Cursor;
@@ -17,84 +16,79 @@ import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Paint;
-import java.awt.RenderingHints;
 import java.awt.Rectangle;
+import java.awt.RenderingHints;
 import java.net.URL;
 
 public class LobbyPanel extends JPanel {
-    private static final int PANEL_WIDTH = 1080;
+    private static final int PANEL_WIDTH = 920;
     private static final int PANEL_HEIGHT = 768;
 
     private static final Color SAND_LIGHT = new Color(240, 197, 142);
     private static final Color SAND_MID = new Color(220, 170, 112);
     private static final Color INK = new Color(33, 22, 12);
-    private static final Color PLAYER_ONE_BUTTON = new Color(187, 92, 15);
-    private static final Color PLAYER_TWO_BUTTON = new Color(19, 126, 11);
+    private static final Color ACTION_BUTTON = new Color(187, 92, 15);
     private static final Color DISABLED_BUTTON = new Color(202, 138, 81);
     private static final Color WAITING_TEXT = new Color(54, 54, 54);
-    private static final Color INPUT_BG = new Color(251, 224, 185);
-    private static final double MENU_BOX_SCALE = 0.92;
+    private static final double MENU_BOX_SCALE = 0.82;
     private static final SVGDocument MENU_BOX_SVG = loadSvg("/dara/ui/images/menuBox.svg");
 
-    private final JButton playerOneButton;
-    private final JButton playerTwoButton;
-    private final JTextField playerOneField;
-    private final JTextField playerTwoField;
-    private String playerOneStatus;
-    private String playerTwoStatus;
+    private final JButton searchButton;
+    private String headline;
+    private String detailLine;
     private String footerMessage;
-    private Integer countdownValue;
+    private Integer waitingSeconds;
 
-    public LobbyPanel(Runnable onPlayerOneClick, Runnable onPlayerTwoClick) {
+    public LobbyPanel(Runnable onSearchClick) {
         setPreferredSize(new Dimension(PANEL_WIDTH, PANEL_HEIGHT));
         setLayout(null);
         setOpaque(true);
 
-        playerOneStatus = "CLIQUE PARA ENTRAR";
-        playerTwoStatus = "CLIQUE PARA ENTRAR";
-        footerMessage = "A PARTIDA SERA INICIADA QUANDO DOIS JOGADORES SE CONECTAREM";
+        headline = "PRONTO PARA JOGAR";
+        detailLine = "CLIQUE NO BOTAO PARA ENTRAR NA FILA";
+        footerMessage = "O SERVIDOR INICIARA A PARTIDA ASSIM QUE HOUVER DOIS CLIENTES";
 
-        playerOneField = createNameField("Player 1", 265, 422);
-        playerTwoField = createNameField("Player 2", 580, 422);
-        playerOneButton = createButton("ENTRAR", PLAYER_ONE_BUTTON, 265, 474, onPlayerOneClick);
-        playerTwoButton = createButton("ENTRAR", PLAYER_TWO_BUTTON, 580, 474, onPlayerTwoClick);
-
-        add(playerOneField);
-        add(playerTwoField);
-        add(playerOneButton);
-        add(playerTwoButton);
+        searchButton = createButton("PROCURAR PARTIDA", (PANEL_WIDTH - 310) / 2, 456, onSearchClick);
+        add(searchButton);
     }
 
-    public void markConnected(PlayerSlot slot) {
-        if (slot == PlayerSlot.PLAYER_1) {
-            playerOneStatus = "AGUARDANDO...";
-            playerOneButton.setEnabled(false);
-            playerOneField.setEnabled(false);
-        } else {
-            playerTwoStatus = "AGUARDANDO...";
-            playerTwoButton.setEnabled(false);
-            playerTwoField.setEnabled(false);
-        }
+    public void showConnecting() {
+        headline = "CONECTANDO AO SERVIDOR";
+        detailLine = "AGUARDE...";
+        footerMessage = "ESTABELECENDO CONEXAO COM O LOBBY";
+        waitingSeconds = null;
+        searchButton.setEnabled(false);
         repaint();
     }
 
-    public void startCountdown() {
-        playerOneField.setVisible(false);
-        playerTwoField.setVisible(false);
-        playerOneButton.setVisible(false);
-        playerTwoButton.setVisible(false);
-        countdownValue = 3;
-        footerMessage = "JOGADORES CONECTADOS";
+    public void showSearching(PlayerSlot slot) {
+        headline = "PROCURANDO PARTIDA";
+        detailLine = "VOCE ENTROU NA FILA";
+        footerMessage = "AGUARDANDO ADVERSARIO";
+        waitingSeconds = 0;
+        searchButton.setEnabled(false);
         repaint();
     }
 
-    public void updateCountdown(int value) {
-        countdownValue = value;
+    public void updateSearchSeconds(int seconds) {
+        waitingSeconds = seconds;
+        repaint();
+    }
+
+    public void showMatchFound(PlayerSlot slot) {
+        headline = "PARTIDA ENCONTRADA";
+        detailLine = "VOCE X ADVERSARIO";
+        footerMessage = "INICIANDO O TABULEIRO";
+        waitingSeconds = null;
         repaint();
     }
 
     public void showConnectionError(String message) {
-        footerMessage = message;
+        headline = "FALHA DE CONEXAO";
+        detailLine = message;
+        footerMessage = "VERIFIQUE O SERVIDOR E TENTE NOVAMENTE";
+        waitingSeconds = null;
+        searchButton.setEnabled(true);
         repaint();
     }
 
@@ -107,39 +101,16 @@ public class LobbyPanel extends JPanel {
         drawBackground(g2);
         drawScroll(g2);
         drawTexts(g2);
-        drawCountdown(g2);
+        drawCounter(g2);
 
         g2.dispose();
     }
 
-    private JButton createButton(String text, Color color, int x, int y, Runnable action) {
-        RoundedButton button = new RoundedButton(text, color);
-        button.setBounds(x, y, 205, 56);
+    private JButton createButton(String text, int x, int y, Runnable action) {
+        RoundedButton button = new RoundedButton(text);
+        button.setBounds(x, y, 310, 56);
         button.addActionListener(event -> action.run());
         return button;
-    }
-
-    private JTextField createNameField(String text, int x, int y) {
-        JTextField field = new JTextField(text);
-        field.setBounds(x, y, 205, 42);
-        field.setHorizontalAlignment(JTextField.CENTER);
-        field.setFont(new Font("Serif", Font.BOLD, 20));
-        field.setForeground(INK);
-        field.setBackground(INPUT_BG);
-        field.setCaretColor(INK);
-        field.setBorder(javax.swing.BorderFactory.createCompoundBorder(
-                javax.swing.BorderFactory.createLineBorder(new Color(115, 92, 72), 2, true),
-                javax.swing.BorderFactory.createEmptyBorder(4, 8, 4, 8)
-        ));
-        return field;
-    }
-
-    public String getPlayerOneName() {
-        return playerOneField.getText();
-    }
-
-    public String getPlayerTwoName() {
-        return playerTwoField.getText();
     }
 
     private void drawBackground(Graphics2D g2) {
@@ -164,27 +135,28 @@ public class LobbyPanel extends JPanel {
     private void drawTexts(Graphics2D g2) {
         g2.setColor(INK);
         g2.setFont(new Font("Serif", Font.BOLD, 52));
-        g2.drawString("DARA GAME", 366, 262);
+        drawCentered(g2, "DARA GAME", 0, 244, getWidth());
+
+        g2.setFont(new Font("Serif", Font.BOLD, 26));
+        drawCentered(g2, headline, 0, 354, getWidth());
 
         g2.setFont(new Font("Serif", Font.BOLD, 18));
-        g2.drawString(playerOneStatus, 278, 360);
-        g2.drawString(playerTwoStatus, 592, 360);
+        drawCentered(g2, detailLine, 0, 394, getWidth());
 
         g2.setColor(WAITING_TEXT);
-        g2.setFont(new Font("Serif", Font.BOLD, 14));
-        drawCenteredLines(g2, splitFooterMessage(), 0, 580, getWidth(), 20);
+        g2.setFont(new Font("Serif", Font.BOLD, 15));
+        drawCenteredLines(g2, splitFooterMessage(), 0, 562, getWidth(), 22);
     }
 
-    private void drawCountdown(Graphics2D g2) {
-        if (countdownValue == null) {
+    private void drawCounter(Graphics2D g2) {
+        if (waitingSeconds == null) {
             return;
         }
 
         g2.setColor(INK);
-        g2.setFont(new Font("Serif", Font.BOLD, 92));
-        String text = String.valueOf(countdownValue);
-        int width = g2.getFontMetrics().stringWidth(text);
-        g2.drawString(text, (getWidth() - width) / 2, 408);
+        g2.setFont(new Font("Serif", Font.BOLD, 72));
+        String secondsText = waitingSeconds + "s";
+        drawCentered(g2, secondsText, 0, 438, getWidth());
     }
 
     private void drawCentered(Graphics2D g2, String text, int x, int y, int width) {
@@ -199,10 +171,10 @@ public class LobbyPanel extends JPanel {
     }
 
     private String[] splitFooterMessage() {
-        if ("A PARTIDA SERA INICIADA QUANDO DOIS JOGADORES SE CONECTAREM".equals(footerMessage)) {
+        if ("O SERVIDOR INICIARA A PARTIDA ASSIM QUE HOUVER DOIS CLIENTES".equals(footerMessage)) {
             return new String[]{
-                    "A PARTIDA SERA INICIADA QUANDO DOIS",
-                    "JOGADORES SE CONECTAREM"
+                    "O SERVIDOR INICIARA A PARTIDA",
+                    "ASSIM QUE HOUVER DOIS CLIENTES"
             };
         }
         return new String[]{footerMessage};
@@ -237,11 +209,8 @@ public class LobbyPanel extends JPanel {
     }
 
     private static final class RoundedButton extends JButton {
-        private final Color color;
-
-        private RoundedButton(String text, Color color) {
+        private RoundedButton(String text) {
             super(text);
-            this.color = color;
             setBorderPainted(false);
             setContentAreaFilled(false);
             setFocusPainted(false);
@@ -255,7 +224,7 @@ public class LobbyPanel extends JPanel {
         protected void paintComponent(Graphics graphics) {
             Graphics2D g2 = (Graphics2D) graphics.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setColor(isEnabled() ? color : DISABLED_BUTTON);
+            g2.setColor(isEnabled() ? ACTION_BUTTON : DISABLED_BUTTON);
             g2.fillRoundRect(0, 0, getWidth(), getHeight(), 28, 28);
             g2.setColor(new Color(115, 92, 72));
             g2.setStroke(new BasicStroke(2f));

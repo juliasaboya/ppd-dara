@@ -2,30 +2,49 @@ package dara.ui;
 
 import dara.model.Game;
 import dara.model.Player;
-import dara.network.Client;
-import dara.network.PlayerSlot;
-import dara.network.Server;
-import dara.protocol.GameAction;
-import dara.protocol.GameActionType;
+import dara.comunication.network.Client;
+import dara.comunication.network.PlayerSlot;
+import dara.comunication.network.Server;
+import dara.comunication.protocol.GameAction;
+import dara.comunication.protocol.GameActionType;
 
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import java.awt.Dimension;
+import java.awt.Point;
+import java.awt.Toolkit;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
 
 public class DaraFrame extends JFrame {
-    private Server server;
+    private static final String LOCAL_PLAYER_NAME = "Voce";
+    private static final String OPPONENT_PLAYER_NAME = "Adversario";
+    private static final int FRAME_WIDTH = 920;
+    private static final int FRAME_HEIGHT = 768;
+
+    private final String host;
+    private final int port;
+    private final Point initialLocation;
+
     private LobbyPanel lobbyPanel;
-    private Client playerOneClient;
-    private Client playerTwoClient;
+    private Client client;
+    private PlayerSlot localSlot;
     private DaraPanel boardPanel;
     private Timer repaintTimer;
-    private Timer countdownTimer;
+    private Timer searchTimer;
+    private int waitingSeconds;
 
     public DaraFrame() {
+        this("localhost", Server.DEFAULT_PORT);
+    }
+
+    public DaraFrame(String host, int port) {
         super("Dara");
+        this.host = host;
+        this.port = port;
+        this.initialLocation = resolveInitialLocation();
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setResizable(false);
         startFreshLobby();
@@ -38,73 +57,112 @@ public class DaraFrame extends JFrame {
         });
     }
 
-    private void connectPlayer(PlayerSlot slot) {
-        try {
-            System.out.println("Tentando conectar via lobby: " + slot.name());
-            Client client = new Client("localhost", server.getPort(), slot);
-            if (!client.connect()) {
-                lobbyPanel.showConnectionError("ESSA VAGA JA ESTA EM USO");
-                return;
+    private void beginMatchmaking() {
+        if (client != null && client.isConnected()) {
+            return;
+        }
+
+        lobbyPanel.showConnecting();
+
+        Thread connectionThread = new Thread(() -> {
+            Client nextClient = new Client(host, port);
+            nextClient.setMatchStartListener(() -> SwingUtilities.invokeLater(this::handleMatchStarted));
+            nextClient.setChatListener((senderSlot, text) ->
+                    SwingUtilities.invokeLater(() -> handleChatReceived(senderSlot, text)));
+            nextClient.setGameActionListener(action ->
+                    SwingUtilities.invokeLater(() -> handleRemoteGameAction(action)));
+
+            try {
+                if (!nextClient.connect()) {
+                    nextClient.close();
+                    SwingUtilities.invokeLater(() -> {
+                        client = null;
+                        lobbyPanel.showConnectionError("NAO FOI POSSIVEL ENTRAR NA FILA");
+                    });
+                    return;
+                }
+
+                SwingUtilities.invokeLater(() -> onClientConnected(nextClient));
+            } catch (IOException exception) {
+                try {
+                    nextClient.close();
+                } catch (IOException ignored) {
+                }
+                SwingUtilities.invokeLater(() -> {
+                    client = null;
+                    lobbyPanel.showConnectionError("SERVIDOR INDISPONIVEL EM " + host + ":" + port);
+                });
             }
+        }, "dara-client-connect");
+        connectionThread.setDaemon(true);
+        connectionThread.start();
+    }
 
-            if (slot == PlayerSlot.PLAYER_1) {
-                playerOneClient = client;
-            } else {
-                playerTwoClient = client;
-            }
-
-            client.setChatListener((senderSlot, text) -> SwingUtilities.invokeLater(() -> handleChatReceived(senderSlot, text)));
-            client.setGameActionListener(action -> SwingUtilities.invokeLater(() -> handleRemoteGameAction(action)));
-
-            lobbyPanel.markConnected(slot);
-
-            if (playerOneClient != null && playerTwoClient != null) {
-                System.out.println("Dois clientes conectados. Iniciando contagem.");
-                beginCountdown();
-            }
-        } catch (IOException exception) {
-            lobbyPanel.showConnectionError("ERRO AO CONECTAR AO SERVIDOR");
+    private void onClientConnected(Client connectedClient) {
+        client = connectedClient;
+        localSlot = connectedClient.getAssignedSlot();
+        waitingSeconds = 0;
+        lobbyPanel.showSearching(localSlot);
+        startSearchTimer();
+        if (connectedClient.isMatchStarted()) {
+            handleMatchStarted();
         }
     }
 
-    private void beginCountdown() {
-        lobbyPanel.startCountdown();
+    private void handleMatchStarted() {
+        if (client == null) {
+            return;
+        }
 
-        final int[] countdown = {3};
-        countdownTimer = new Timer(1000, event -> {
-            countdown[0]--;
-            if (countdown[0] > 0) {
-                lobbyPanel.updateCountdown(countdown[0]);
-                return;
-            }
+        if (localSlot == null) {
+            localSlot = client.getAssignedSlot();
+        }
 
-            countdownTimer.stop();
-            showBoard();
+        stopSearchTimer();
+        lobbyPanel.showMatchFound(localSlot);
+        showBoard();
+    }
+
+    private void startSearchTimer() {
+        stopSearchTimer();
+        searchTimer = new Timer(1000, event -> {
+            waitingSeconds++;
+            lobbyPanel.updateSearchSeconds(waitingSeconds);
         });
-        countdownTimer.setInitialDelay(1000);
-        countdownTimer.start();
+        searchTimer.setInitialDelay(1000);
+        searchTimer.start();
+    }
+
+    private void stopSearchTimer() {
+        if (searchTimer != null) {
+            searchTimer.stop();
+            searchTimer = null;
+        }
     }
 
     private void showBoard() {
-        System.out.println("Contagem concluida. Abrindo tabuleiro.");
-        Game game = new Game(lobbyPanel.getPlayerOneName(), lobbyPanel.getPlayerTwoName());
-        boardPanel = new DaraPanel(game, this::sendChatMessage, this::sendGameAction, this::restartToFreshLobby);
+        if (boardPanel != null || localSlot == null) {
+            return;
+        }
+
+        Game game = new Game(resolvePlayerOneName(), resolvePlayerTwoName());
+        boardPanel = new DaraPanel(game, localSlot, this::sendChatMessage, this::sendGameAction, this::restartToFreshLobby);
+        setTitle("Dara - " + LOCAL_PLAYER_NAME);
 
         setContentPane(boardPanel);
         pack();
         revalidate();
         repaint();
+        bringWindowToFront();
 
         repaintTimer = new Timer(1000, event -> boardPanel.repaint());
         repaintTimer.start();
     }
 
-    private void sendChatMessage(PlayerSlot slot, String text) {
+    private void sendChatMessage(String text) {
         try {
-            if (slot == PlayerSlot.PLAYER_1 && playerOneClient != null) {
-                playerOneClient.sendChat(text);
-            } else if (slot == PlayerSlot.PLAYER_2 && playerTwoClient != null) {
-                playerTwoClient.sendChat(text);
+            if (client != null) {
+                client.sendChat(text);
             }
         } catch (IOException exception) {
             if (boardPanel != null) {
@@ -117,22 +175,21 @@ public class DaraFrame extends JFrame {
         if (boardPanel == null || text == null || text.isBlank()) {
             return;
         }
-        String senderName = senderSlot == PlayerSlot.PLAYER_1 ? lobbyPanel.getPlayerOneName() : lobbyPanel.getPlayerTwoName();
-        boardPanel.appendChatMessage(senderName, text);
+        boardPanel.appendChatMessage(resolveChatSenderName(senderSlot), text);
     }
 
     private void sendGameAction(GameAction action) {
         try {
-            if (action.slot() == PlayerSlot.PLAYER_1 && playerOneClient != null) {
-                playerOneClient.sendGameAction(action);
-            } else if (action.slot() == PlayerSlot.PLAYER_2 && playerTwoClient != null) {
-                playerTwoClient.sendGameAction(action);
+            if (client != null) {
+                client.sendGameAction(action);
             }
         } catch (IOException exception) {
             if (boardPanel != null) {
                 boardPanel.appendChatMessage("Sistema", "Nao foi possivel sincronizar a jogada.");
             }
         }
+
+        disconnectAfterMatchEnded();
     }
 
     private void handleRemoteGameAction(GameAction action) {
@@ -140,13 +197,8 @@ public class DaraFrame extends JFrame {
             return;
         }
 
-        // Na UI atual de janela unica existem dois clientes locais. Reaplicar aqui duplicaria a jogada.
-        if (playerOneClient != null && playerTwoClient != null) {
-            return;
-        }
-
         Game game = boardPanel.getGame();
-        Player player = action.slot() == PlayerSlot.PLAYER_1 ? Player.COLOR_TWO : Player.COLOR_ONE;
+        Player player = action.slot().getControlledPlayer();
 
         if (action.type() == GameActionType.PLACE) {
             game.applyRemotePlace(player, action.row(), action.column());
@@ -160,55 +212,92 @@ public class DaraFrame extends JFrame {
 
         boardPanel.refreshStatus();
         boardPanel.repaint();
+        disconnectAfterMatchEnded();
     }
 
     private void restartToFreshLobby() {
         shutdownNetwork();
-        playerOneClient = null;
-        playerTwoClient = null;
+        client = null;
+        localSlot = null;
         boardPanel = null;
         startFreshLobby();
     }
 
     private void startFreshLobby() {
-        server = new Server();
-        lobbyPanel = new LobbyPanel(
-                () -> connectPlayer(PlayerSlot.PLAYER_1),
-                () -> connectPlayer(PlayerSlot.PLAYER_2)
-        );
+        setTitle("Dara");
+        lobbyPanel = new LobbyPanel(this::beginMatchmaking);
 
         setContentPane(lobbyPanel);
         pack();
-        setLocationRelativeTo(null);
+        setLocation(initialLocation);
         revalidate();
         repaint();
+        bringWindowToFront();
+    }
+
+    private void disconnectAfterMatchEnded() {
+        if (boardPanel == null || boardPanel.getGame().getState() != dara.model.GameState.FINISHED || client == null) {
+            return;
+        }
 
         try {
-            server.start();
-            System.out.println("Lobby iniciado. Servidor local ativo.");
-        } catch (IOException exception) {
-            lobbyPanel.showConnectionError("NAO FOI POSSIVEL INICIAR O SERVIDOR");
+            client.close();
+        } catch (IOException ignored) {
+        } finally {
+            client = null;
         }
+    }
+
+    private String resolvePlayerOneName() {
+        return localSlot != null && localSlot.getControlledPlayer() == Player.COLOR_TWO
+                ? LOCAL_PLAYER_NAME
+                : OPPONENT_PLAYER_NAME;
+    }
+
+    private String resolvePlayerTwoName() {
+        return localSlot != null && localSlot.getControlledPlayer() == Player.COLOR_ONE
+                ? LOCAL_PLAYER_NAME
+                : OPPONENT_PLAYER_NAME;
+    }
+
+    private String resolveChatSenderName(PlayerSlot senderSlot) {
+        if (localSlot != null && senderSlot != null
+                && senderSlot.getControlledPlayer() == localSlot.getControlledPlayer()) {
+            return LOCAL_PLAYER_NAME;
+        }
+        return OPPONENT_PLAYER_NAME;
     }
 
     private void shutdownNetwork() {
         try {
-            if (countdownTimer != null) {
-                countdownTimer.stop();
-            }
+            stopSearchTimer();
             if (repaintTimer != null) {
                 repaintTimer.stop();
+                repaintTimer = null;
             }
-            if (playerOneClient != null) {
-                playerOneClient.close();
-            }
-            if (playerTwoClient != null) {
-                playerTwoClient.close();
-            }
-            if (server != null) {
-                server.close();
+            if (client != null) {
+                client.close();
             }
         } catch (IOException ignored) {
         }
+    }
+
+    private Point resolveInitialLocation() {
+        Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
+        int baseX = Math.max(0, (screenSize.width - FRAME_WIDTH) / 2);
+        int baseY = Math.max(0, (screenSize.height - FRAME_HEIGHT) / 2);
+        long pid = ProcessHandle.current().pid();
+        int offsetX = (int) ((pid % 5) * 36);
+        int offsetY = (int) ((pid % 4) * 28);
+        int x = Math.min(Math.max(0, baseX + offsetX), Math.max(0, screenSize.width - FRAME_WIDTH));
+        int y = Math.min(Math.max(0, baseY + offsetY), Math.max(0, screenSize.height - FRAME_HEIGHT));
+        return new Point(x, y);
+    }
+
+    private void bringWindowToFront() {
+        setAlwaysOnTop(true);
+        toFront();
+        requestFocus();
+        setAlwaysOnTop(false);
     }
 }

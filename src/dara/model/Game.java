@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Random;
 
 public class Game {
-    public static final int INITIAL_RESERVE_PER_PLAYER = 9;
+    public static final int INITIAL_RESERVE_PER_PLAYER = 12;
 
     private final Board board;
     private final Instant startedAt;

@@ -6,20 +6,23 @@ import com.github.weisj.jsvg.view.ViewBox;
 import dara.model.Board;
 import dara.model.Game;
 import dara.model.Player;
-import dara.network.PlayerSlot;
-import dara.protocol.GameAction;
-import dara.protocol.GameActionType;
+import dara.comunication.network.PlayerSlot;
+import dara.comunication.protocol.GameAction;
+import dara.comunication.protocol.GameActionType;
 
 import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
-import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
-import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.JTextPane;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.Timer;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.SimpleAttributeSet;
+import javax.swing.text.StyleConstants;
+import javax.swing.text.StyledDocument;
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
@@ -44,16 +47,21 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class DaraPanel extends JPanel {
+    private static final int PANEL_WIDTH = 920;
+    private static final int PANEL_HEIGHT = 768;
+    private static final double SVG_SCALE = 0.75;
+    private static final int CHAT_BOX_WIDTH = (int) Math.round(785 * SVG_SCALE);
+    private static final int CHAT_BOX_HEIGHT = (int) Math.round(268 * SVG_SCALE);
+    private static final int CHAT_BOX_X = (PANEL_WIDTH - CHAT_BOX_WIDTH) / 2;
+    private static final int CHAT_BOX_Y = PANEL_HEIGHT - CHAT_BOX_HEIGHT;
+
     public interface ChatSender {
-        void send(PlayerSlot slot, String text);
+        void send(String text);
     }
 
     public interface GameActionSender {
         void send(GameAction action);
     }
-
-    private static final int PANEL_WIDTH = 1080;
-    private static final int PANEL_HEIGHT = 768;
 
     private static final Color SAND_LIGHT = new Color(240, 197, 142);
     private static final Color SAND_MID = new Color(220, 170, 112);
@@ -65,36 +73,47 @@ public class DaraPanel extends JPanel {
     private static final Color PLAYER_TWO = new Color(178, 92, 28);
     private static final Color PLAYER_TWO_SHADOW = new Color(122, 54, 17);
     private static final Color INK = new Color(33, 22, 12);
+    private static final Color IVORY = new Color(255, 245, 222);
+    private static final Color CHAT_LOCAL = new Color(49, 96, 42);
+    private static final Color CHAT_OPPONENT = new Color(145, 76, 23);
+    private static final Color CHAT_SYSTEM = new Color(102, 76, 52);
 
     private static final int TOP_BANNER_MARGIN = 10;
-    private static final int TOP_BANNER_X = 280;
-    private static final double SVG_SCALE = 0.75;
-    private static final int BOARD_X = 301;
-    private static final int BOARD_Y = 192;
     private static final int BOARD_WIDTH = 477;
     private static final int BOARD_HEIGHT = 376;
+    private static final int BOARD_X = (PANEL_WIDTH - BOARD_WIDTH) / 2;
+    private static final int BOARD_Y = 192;
     private static final int BOARD_MARGIN = 16;
     private static final int BOARD_GAP = 8;
-    private static final int CHAT_X = 246;
-    private static final int CHAT_Y = 567;
-    private static final int CHAT_WIDTH = 589;
-    private static final int SIDE_CHAT_WIDTH = 180;
-    private static final int LEFT_CHAT_X = 18;
-    private static final int LEFT_CHAT_Y = 92;
-    private static final int RIGHT_CHAT_Y = 448;
+    private static final int LEFT_RESERVE_LABEL_X = 10;
+    private static final int LEFT_RESERVE_LABEL_Y = 130;
+    private static final int LEFT_RESERVE_LABEL_WIDTH = 184;
+    private static final int LEFT_RESERVE_PIECES_X = 34;
+    private static final int LEFT_RESERVE_PIECES_Y = 228;
+    private static final int RIGHT_RESERVE_LABEL_X = 726;
+    private static final int RIGHT_RESERVE_LABEL_Y = 494;
+    private static final int RIGHT_RESERVE_LABEL_WIDTH = 184;
+    private static final int RIGHT_RESERVE_PIECES_X = 718;
+    private static final int RIGHT_RESERVE_PIECES_Y = 178;
+    private static final int ACTION_BUTTON_X = BOARD_X + BOARD_WIDTH + 18;
+    private static final double OPPONENT_PIECE_SCALE = 0.6;
+    private static final float OPPONENT_PIECE_OPACITY = 0.55f;
 
     private static final SVGDocument TOP_BANNER_SVG = loadSvg("/dara/ui/images/old_paper_scroll_set.svg");
     private static final SVGDocument CHAT_BOX_SVG = loadSvg("/dara/ui/images/ChatBox.svg");
     private static final Image BACKGROUND_IMAGE = loadImage();
 
     private final List<ReservePieceHitBox> reserveHitBoxes;
+    private final PlayerSlot localSlot;
+    private final Player localPlayer;
     private final ChatSender chatSender;
     private final GameActionSender gameActionSender;
     private final Game game;
     private final JButton randomPhaseButton;
     private final JButton surrenderButton;
     private final JButton restartButton;
-    private final JTextArea chatTextArea;
+    private final JTextPane chatTextPane;
+    private final JTextField chatInputField;
     private String playerMessage;
     private String opponentMessage;
     private Player selectedReservePlayer;
@@ -103,8 +122,11 @@ public class DaraPanel extends JPanel {
     private PieceAnimation activeAnimation;
     private Timer animationTimer;
 
-    public DaraPanel(Game game, ChatSender chatSender, GameActionSender gameActionSender, Runnable restartToLobbyAction) {
+    public DaraPanel(Game game, PlayerSlot localSlot, ChatSender chatSender, GameActionSender gameActionSender,
+                     Runnable restartToLobbyAction) {
         this.game = game;
+        this.localSlot = localSlot;
+        this.localPlayer = localSlot.getControlledPlayer();
         this.chatSender = chatSender;
         this.gameActionSender = gameActionSender;
         this.reserveHitBoxes = new ArrayList<>();
@@ -113,27 +135,22 @@ public class DaraPanel extends JPanel {
         setBackground(SAND_LIGHT);
         setLayout(null);
 
-        randomPhaseButton = createHelperButton("Auto Fase", TOP_BANNER_X + 384, TOP_BANNER_MARGIN + 24, 96, _ -> runRandomPhaseHelper());
-        surrenderButton = createHelperButton("Desistir", TOP_BANNER_X + 384, TOP_BANNER_MARGIN + 64, 96, _ -> surrenderMatch());
+        randomPhaseButton = createHelperButton("Auto Fase", ACTION_BUTTON_X, TOP_BANNER_MARGIN + 24, 96, _ -> runRandomPhaseHelper());
+        surrenderButton = createHelperButton("Desistir", ACTION_BUTTON_X, TOP_BANNER_MARGIN + 64, 96, _ -> surrenderMatch());
         restartButton = createHelperButton("Novo Jogo", BOARD_X + 168, BOARD_Y + 214, 140, _ -> restartToLobbyAction.run());
         restartButton.setVisible(false);
+        randomPhaseButton.setVisible(false);
+        randomPhaseButton.setEnabled(false);
 
-        JComponent playerTwoChatIcon = createMessageIcon(LEFT_CHAT_X, LEFT_CHAT_Y);
-        JTextField playerTwoChatField = createSideChatField(LEFT_CHAT_X + 30, LEFT_CHAT_Y, PlayerSlot.PLAYER_2);
-        JComponent playerOneChatIcon = createMessageIcon(864, RIGHT_CHAT_Y);
-        JTextField playerOneChatField = createSideChatField(894, RIGHT_CHAT_Y, PlayerSlot.PLAYER_1);
-
-        chatTextArea = createChatTextArea();
-        JScrollPane chatScrollPane = createChatScrollPane(chatTextArea);
+        chatTextPane = createChatTextPane();
+        JScrollPane chatScrollPane = createChatScrollPane(chatTextPane);
+        chatInputField = createChatInputField();
 
         add(randomPhaseButton);
         add(surrenderButton);
         add(restartButton);
-        add(playerTwoChatIcon);
-        add(playerTwoChatField);
-        add(playerOneChatIcon);
-        add(playerOneChatField);
         add(chatScrollPane);
+        add(chatInputField);
         addMouseListener(new BoardMouseHandler());
 
         updateStatusMessages();
@@ -262,21 +279,19 @@ public class DaraPanel extends JPanel {
     }
 
     private void drawLeftReserve(Graphics2D g2) {
-        g2.setPaint(new GradientPaint(0, 130, new Color(90, 141, 55), 216, 130, new Color(116, 157, 73)));
-        g2.fillRoundRect(-34, 130, 250, 68, 32, 32);
-        g2.setColor(INK);
-        g2.setFont(new Font("Serif", Font.BOLD, 30));
-        g2.drawString(game.getPlayerTwoName(), 48, 170);
-        drawReservePieces(g2, 92, 228, game.getReserveCount(Player.COLOR_ONE), Player.COLOR_ONE);
+        g2.setPaint(new GradientPaint(LEFT_RESERVE_LABEL_X, LEFT_RESERVE_LABEL_Y, new Color(90, 141, 55),
+                LEFT_RESERVE_LABEL_X + LEFT_RESERVE_LABEL_WIDTH, LEFT_RESERVE_LABEL_Y, new Color(116, 157, 73)));
+        g2.fillRoundRect(LEFT_RESERVE_LABEL_X, LEFT_RESERVE_LABEL_Y, LEFT_RESERVE_LABEL_WIDTH, 68, 32, 32);
+        drawReserveHeader(g2, LEFT_RESERVE_LABEL_X, 170, Player.COLOR_ONE);
+        drawReservePieces(g2, LEFT_RESERVE_PIECES_X, LEFT_RESERVE_PIECES_Y, game.getReserveCount(Player.COLOR_ONE), Player.COLOR_ONE);
     }
 
     private void drawRightReserve(Graphics2D g2) {
-        g2.setPaint(new GradientPaint(830, 494, new Color(207, 145, 88), 1075, 494, new Color(196, 123, 61)));
-        g2.fillRoundRect(830, 494, 268, 66, 34, 34);
-        g2.setColor(INK);
-        g2.setFont(new Font("Serif", Font.BOLD, 30));
-        g2.drawString(game.getPlayerOneName(), 866, 536);
-        drawReservePieces(g2, 856, 178, game.getReserveCount(Player.COLOR_TWO), Player.COLOR_TWO);
+        g2.setPaint(new GradientPaint(RIGHT_RESERVE_LABEL_X, RIGHT_RESERVE_LABEL_Y, new Color(207, 145, 88),
+                RIGHT_RESERVE_LABEL_X + RIGHT_RESERVE_LABEL_WIDTH, RIGHT_RESERVE_LABEL_Y, new Color(196, 123, 61)));
+        g2.fillRoundRect(RIGHT_RESERVE_LABEL_X, RIGHT_RESERVE_LABEL_Y, RIGHT_RESERVE_LABEL_WIDTH, 66, 34, 34);
+        drawReserveHeader(g2, RIGHT_RESERVE_LABEL_X, 536, Player.COLOR_TWO);
+        drawReservePieces(g2, RIGHT_RESERVE_PIECES_X, RIGHT_RESERVE_PIECES_Y, game.getReserveCount(Player.COLOR_TWO), Player.COLOR_TWO);
     }
 
     private void drawReservePieces(Graphics2D g2, int startX, int startY, int count, Player player) {
@@ -303,34 +318,43 @@ public class DaraPanel extends JPanel {
     }
 
     private void drawPiece(Graphics2D g2, int centerX, int centerY, int radius, Player player) {
+        int adjustedRadius = player == localPlayer ? radius : Math.max(6, (int) Math.round(radius * OPPONENT_PIECE_SCALE));
+        float opacity = player == localPlayer ? 1.0f : OPPONENT_PIECE_OPACITY;
         Color primary = player == Player.COLOR_ONE ? PLAYER_ONE : PLAYER_TWO;
         Color shadow = player == Player.COLOR_ONE ? PLAYER_ONE_SHADOW : PLAYER_TWO_SHADOW;
+        Graphics2D pieceGraphics = (Graphics2D) g2.create();
 
-        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.24f));
-        g2.setColor(new Color(22, 14, 8));
-        g2.fillOval(centerX - radius - 5, centerY - radius + 8, radius * 2 + 10, radius * 2 + 12);
-        g2.setComposite(AlphaComposite.SrcOver);
+        pieceGraphics.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.24f * opacity));
+        pieceGraphics.setColor(new Color(22, 14, 8));
+        pieceGraphics.fillOval(centerX - adjustedRadius - 5, centerY - adjustedRadius + 8, adjustedRadius * 2 + 10, adjustedRadius * 2 + 12);
+        pieceGraphics.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, opacity));
 
-        g2.setColor(new Color(247, 233, 204));
-        g2.fill(new Ellipse2D.Double(centerX - radius - 6, centerY - radius - 6, (radius + 6) * 2.0, (radius + 6) * 2.0));
+        pieceGraphics.setColor(new Color(247, 233, 204));
+        pieceGraphics.fill(new Ellipse2D.Double(
+                centerX - adjustedRadius - 6,
+                centerY - adjustedRadius - 6,
+                (adjustedRadius + 6) * 2.0,
+                (adjustedRadius + 6) * 2.0
+        ));
 
-        ShapeFactory starOuter = new ShapeFactory(centerX, centerY, radius + 2, radius - 8, 10);
-        ShapeFactory starInner = new ShapeFactory(centerX, centerY, radius - 2, radius - 12, 10);
+        ShapeFactory starOuter = new ShapeFactory(centerX, centerY, adjustedRadius + 2, adjustedRadius - 8, 10);
+        ShapeFactory starInner = new ShapeFactory(centerX, centerY, adjustedRadius - 2, adjustedRadius - 12, 10);
 
-        g2.setColor(shadow);
-        g2.fill(starOuter.create());
-        g2.setColor(primary);
-        g2.fill(starInner.create());
+        pieceGraphics.setColor(shadow);
+        pieceGraphics.fill(starOuter.create());
+        pieceGraphics.setColor(primary);
+        pieceGraphics.fill(starInner.create());
 
-        g2.setColor(new Color(252, 240, 213, 210));
-        g2.fill(new Ellipse2D.Double(centerX - 4, centerY - 4, 8, 8));
+        pieceGraphics.setColor(new Color(252, 240, 213, 210));
+        pieceGraphics.fill(new Ellipse2D.Double(centerX - 4, centerY - 4, 8, 8));
 
-        g2.setColor(new Color(255, 246, 220, 180));
+        pieceGraphics.setColor(new Color(255, 246, 220, 180));
         Polygon highlight = new Polygon();
-        highlight.addPoint(centerX - 4, centerY - radius + 5);
-        highlight.addPoint(centerX + 6, centerY - radius + 12);
-        highlight.addPoint(centerX + 1, centerY - radius / 3);
-        g2.fillPolygon(highlight);
+        highlight.addPoint(centerX - 4, centerY - adjustedRadius + 5);
+        highlight.addPoint(centerX + 6, centerY - adjustedRadius + 12);
+        highlight.addPoint(centerX + 1, centerY - adjustedRadius / 3);
+        pieceGraphics.fillPolygon(highlight);
+        pieceGraphics.dispose();
     }
 
     private void drawCenteredText(Graphics2D g2, String text, Rectangle area) {
@@ -339,6 +363,20 @@ public class DaraPanel extends JPanel {
         int drawX = area.x + (area.width - textWidth) / 2;
         int drawY = area.y + (area.height + ascent) / 2 - 6;
         g2.drawString(text, drawX, drawY);
+    }
+
+    private void drawReserveHeader(Graphics2D g2, int x, int baselineY, Player player) {
+        boolean localReserve = player == localPlayer;
+        String title = game.getPlayerName(player).toUpperCase();
+        String subtitle = localReserve ? "SUAS PECAS" : "PECAS DO RIVAL";
+
+        g2.setColor(localReserve ? IVORY : new Color(255, 240, 214, 210));
+        g2.setFont(new Font("Serif", Font.BOLD, 25));
+        g2.drawString(title, x + 20, baselineY);
+
+        g2.setColor(localReserve ? new Color(255, 248, 232, 220) : new Color(88, 53, 27, 180));
+        g2.setFont(new Font("SansSerif", Font.BOLD, 11));
+        g2.drawString(subtitle, x + 21, baselineY + 18);
     }
 
     private void drawSelectedReserveHighlight(Graphics2D g2, int centerX, int centerY) {
@@ -486,9 +524,22 @@ public class DaraPanel extends JPanel {
     }
 
     private void handleBoardClick(int mouseX, int mouseY) {
+        if (game.getCurrentTurn() != localPlayer) {
+            playerMessage = game.getPlayerName(localPlayer) + ": aguarde a sua vez.";
+            opponentMessage = game.getPlayerName(localPlayer.opponent()) + ": jogando agora.";
+            repaint();
+            return;
+        }
+
         Player reservePlayer = resolveReserveSelection(mouseX, mouseY);
         if (reservePlayer != null) {
             if (game.getState() != dara.model.GameState.PLACING) {
+                return;
+            }
+            if (reservePlayer != localPlayer) {
+                playerMessage = game.getPlayerName(localPlayer) + ": voce controla apenas a sua propria cor.";
+                opponentMessage = game.getPlayerName(localPlayer.opponent()) + ": aguardando sua jogada.";
+                repaint();
                 return;
             }
             if (reservePlayer != game.getCurrentTurn()) {
@@ -589,6 +640,13 @@ public class DaraPanel extends JPanel {
             return;
         }
 
+        if (pieceAtCell == localPlayer.opponent()) {
+            playerMessage = game.getPlayerName(localPlayer) + ": voce nao pode mover a cor do oponente.";
+            opponentMessage = game.getPlayerName(localPlayer.opponent()) + ": aguardando sua jogada.";
+            repaint();
+            return;
+        }
+
         if (pieceAtCell != null && pieceAtCell != game.getCurrentTurn()) {
             playerMessage = game.getCurrentTurnName() + ": selecione uma peca da sua propria cor.";
             opponentMessage = game.getWaitingPlayerName() + ": aguardando jogada do oponente.";
@@ -655,9 +713,9 @@ public class DaraPanel extends JPanel {
 
     private void syncUiState() {
         boolean finished = game.getState() == dara.model.GameState.FINISHED;
-        boolean allowRandomPhase = game.getState() == dara.model.GameState.PLACING && !randomPhaseUsed;
 
-        randomPhaseButton.setEnabled(allowRandomPhase);
+        randomPhaseButton.setEnabled(false);
+        randomPhaseButton.setVisible(false);
         surrenderButton.setEnabled(!finished);
         restartButton.setVisible(finished);
         restartButton.setEnabled(finished);
@@ -667,11 +725,13 @@ public class DaraPanel extends JPanel {
         if (text == null || text.isBlank()) {
             return;
         }
-        if (!chatTextArea.getText().isBlank()) {
-            chatTextArea.append(System.lineSeparator());
+        StyledDocument document = chatTextPane.getStyledDocument();
+        if (document.getLength() > 0) {
+            appendStyledText(document, System.lineSeparator(), createMessageStyle(INK, false));
         }
-        chatTextArea.append(senderName + ": " + text);
-        chatTextArea.setCaretPosition(chatTextArea.getDocument().getLength());
+        appendStyledText(document, senderName + ": ", createSenderStyle(senderName));
+        appendStyledText(document, text, createMessageStyle(INK, false));
+        chatTextPane.setCaretPosition(document.getLength());
         repaint();
     }
 
@@ -683,21 +743,17 @@ public class DaraPanel extends JPanel {
         updateStatusMessages();
     }
 
-    private JTextArea createChatTextArea() {
-        JTextArea area = new JTextArea();
-        area.setEditable(false);
-        area.setLineWrap(true);
-        area.setWrapStyleWord(true);
-        area.setFont(new Font("Serif", Font.BOLD, 16));
-        area.setForeground(INK);
-        area.setOpaque(false);
-        area.setFocusable(false);
-        return area;
+    private JTextPane createChatTextPane() {
+        JTextPane pane = new JTextPane();
+        pane.setEditable(false);
+        pane.setOpaque(false);
+        pane.setFocusable(false);
+        return pane;
     }
 
-    private JScrollPane createChatScrollPane(JTextArea area) {
-        JScrollPane scrollPane = new JScrollPane(area);
-        scrollPane.setBounds(CHAT_X + 96, CHAT_Y + 52, CHAT_WIDTH - 192, 122);
+    private JScrollPane createChatScrollPane(JTextPane pane) {
+        JScrollPane scrollPane = new JScrollPane(pane);
+        scrollPane.setBounds(CHAT_BOX_X + 96, CHAT_BOX_Y + 44, CHAT_BOX_WIDTH - 192, 88);
         scrollPane.setOpaque(false);
         scrollPane.getViewport().setOpaque(false);
         scrollPane.setBorder(null);
@@ -706,9 +762,9 @@ public class DaraPanel extends JPanel {
         return scrollPane;
     }
 
-    private JTextField createSideChatField(int x, int y, PlayerSlot slot) {
+    private JTextField createChatInputField() {
         JTextField field = new JTextField();
-        field.setBounds(x, y, SIDE_CHAT_WIDTH, 34);
+        field.setBounds(CHAT_BOX_X + 96, CHAT_BOX_Y + 142, CHAT_BOX_WIDTH - 192, 30);
         field.setFont(new Font("Serif", Font.BOLD, 14));
         field.setForeground(INK);
         field.setBackground(new Color(245, 220, 180, 230));
@@ -717,32 +773,9 @@ public class DaraPanel extends JPanel {
                 BorderFactory.createLineBorder(new Color(138, 92, 52), 2, true),
                 BorderFactory.createEmptyBorder(4, 10, 4, 10)
         ));
-        field.addActionListener(_ -> submitChatMessage(slot, field));
+        field.setToolTipText("Envie uma mensagem para o outro jogador");
+        field.addActionListener(_ -> submitChatMessage(field));
         return field;
-    }
-
-    private JComponent createMessageIcon(int x, int y) {
-        JComponent icon = new JComponent() {
-            @Override
-            protected void paintComponent(Graphics graphics) {
-                Graphics2D g2 = (Graphics2D) graphics.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(new Color(114, 77, 42));
-                g2.fillRoundRect(2, 2, 22, 18, 8, 8);
-                Polygon tail = new Polygon();
-                tail.addPoint(9, 19);
-                tail.addPoint(12, 26);
-                tail.addPoint(16, 19);
-                g2.fillPolygon(tail);
-                g2.setColor(new Color(245, 220, 180));
-                g2.fillOval(7, 8, 3, 3);
-                g2.fillOval(12, 8, 3, 3);
-                g2.fillOval(17, 8, 3, 3);
-                g2.dispose();
-            }
-        };
-        icon.setBounds(x, y + 4, 28, 28);
-        return icon;
     }
 
     private JButton createHelperButton(String text, int x, int y, int width, ActionListener listener) {
@@ -756,13 +789,42 @@ public class DaraPanel extends JPanel {
         return button;
     }
 
-    private void submitChatMessage(PlayerSlot slot, JTextField field) {
+    private SimpleAttributeSet createSenderStyle(String senderName) {
+        Color color = CHAT_SYSTEM;
+        if ("Voce".equalsIgnoreCase(senderName)) {
+            color = CHAT_LOCAL;
+        } else if ("Adversario".equalsIgnoreCase(senderName)) {
+            color = CHAT_OPPONENT;
+        }
+        return createMessageStyle(color, true);
+    }
+
+    private SimpleAttributeSet createMessageStyle(Color color, boolean bold) {
+        SimpleAttributeSet attributes = new SimpleAttributeSet();
+        StyleConstants.setForeground(attributes, color);
+        StyleConstants.setBold(attributes, bold);
+        StyleConstants.setFontFamily(attributes, "Serif");
+        StyleConstants.setFontSize(attributes, bold ? 16 : 15);
+        return attributes;
+    }
+
+    private void appendStyledText(StyledDocument document, String text, SimpleAttributeSet attributes) {
+        try {
+            document.insertString(document.getLength(), text, attributes);
+        } catch (BadLocationException exception) {
+            throw new IllegalStateException("Nao foi possivel atualizar o chat.", exception);
+        }
+    }
+
+    private void submitChatMessage(JTextField field) {
         String text = field.getText();
         if (text == null || text.isBlank()) {
             return;
         }
 
-        chatSender.send(slot, text.trim());
+        String trimmedText = text.trim();
+        appendChatMessage(game.getPlayerName(localPlayer), trimmedText);
+        chatSender.send(trimmedText);
         field.setText("");
     }
 
@@ -781,7 +843,7 @@ public class DaraPanel extends JPanel {
     }
 
     private void surrenderMatch() {
-        Player surrenderingPlayer = game.getCurrentTurn();
+        Player surrenderingPlayer = localPlayer;
         game.applyRemoteSurrender(surrenderingPlayer);
         gameActionSender.send(new GameAction(
                 GameActionType.SURRENDER,
@@ -822,11 +884,13 @@ public class DaraPanel extends JPanel {
     }
 
     private BoardCenter getReserveAnimationStart(Player player) {
-        return player == Player.COLOR_ONE ? new BoardCenter(92, 228) : new BoardCenter(856, 178);
+        return player == Player.COLOR_ONE
+                ? new BoardCenter(LEFT_RESERVE_PIECES_X, LEFT_RESERVE_PIECES_Y)
+                : new BoardCenter(RIGHT_RESERVE_PIECES_X, RIGHT_RESERVE_PIECES_Y);
     }
 
     private PlayerSlot toPlayerSlot(Player player) {
-        return player == Player.COLOR_TWO ? PlayerSlot.PLAYER_1 : PlayerSlot.PLAYER_2;
+        return PlayerSlot.fromPlayer(player);
     }
 
     private record BoardCell(int row, int column) {
